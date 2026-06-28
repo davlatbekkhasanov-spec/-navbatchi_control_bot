@@ -41,8 +41,8 @@ DATA_DIR = BASE_DIR / "data"
 DB_PATH = DATA_DIR / "navbatchi.db"
 
 # Jadval vaqtlari (Toshkent vaqti, UTC+5)
-MORNING_HOUR = _env_int("MORNING_HOUR", 8) or 8
-MORNING_MINUTE = _env_int("MORNING_MINUTE", 0) or 0
+MORNING_HOUR = _env_int("MORNING_HOUR", 7) or 7
+MORNING_MINUTE = _env_int("MORNING_MINUTE", 30) or 30
 EVENING_HOUR = _env_int("EVENING_HOUR", 20) or 20
 EVENING_MINUTE = _env_int("EVENING_MINUTE", 0) or 0
 

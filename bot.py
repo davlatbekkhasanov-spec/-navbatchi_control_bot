@@ -215,14 +215,11 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
             await message.answer(
                 "👋 Salom, <b>Admin</b>!\n\n"
                 "🧹 <b>Navbatchi</b> botiga xush kelibsiz.\n\n"
-                "📌 Buyruqlar:\n"
-                "/today — bugungi navbatchilar\n"
-                "/report_today — bugungi hisobot\n"
-                "/rating — oylik reyting\n"
-                "/employees — xodimlar ro'yxati\n"
-                "/groups — navbatchilik guruhlari\n"
-                "/help — yordam",
+                "⏰ Har kuni <b>07:30</b> da navbatchilar ro'yxati "
+                "guruhga avtomatik yuboriladi.\n\n"
+                "👇 Quyidagi tugmalardan foydalaning:",
                 parse_mode="HTML",
+                reply_markup=kb.admin_menu_keyboard(),
             )
             return
 
@@ -290,7 +287,7 @@ async def link_employee(callback: CallbackQuery) -> None:
 
 
 @router.message(Command("help"))
-@router.message(F.text == "ℹ️ Yordam")
+@router.message(F.text == kb.BTN_HELP)
 async def cmd_help(message: Message) -> None:
     text = (
         "ℹ️ <b>Yordam</b>\n\n"
@@ -311,36 +308,63 @@ async def cmd_help(message: Message) -> None:
     )
     if is_admin(message.from_user.id):
         text += (
-            "\n\n<b>Admin buyruqlari:</b>\n"
-            "/today — bugungi navbatchilar\n"
-            "/report_today — bugungi hisobot\n"
-            "/rating — oylik reyting\n"
-            "/employees — xodimlar\n"
-            "/groups — navbatchilik guruhlari\n"
-            "/setgroup — guruhni ulash"
+            "\n\n<b>Admin tugmalari:</b>\n"
+            f"{kb.BTN_TODAY} — ro'yxatni ko'rish\n"
+            f"{kb.BTN_SEND_GROUP} — guruhga yuborish\n"
+            f"{kb.BTN_REPORT} — bugungi hisobot\n"
+            f"{kb.BTN_RATING} — oylik reyting\n"
+            f"{kb.BTN_EMPLOYEES} — xodimlar\n"
+            f"{kb.BTN_GROUPS} — navbatchi guruhlari\n"
+            "/setgroup — guruhni ulash (guruh ichida)"
         )
+        await message.answer(text, parse_mode="HTML", reply_markup=kb.admin_menu_keyboard())
+        return
     await message.answer(text, parse_mode="HTML")
 
 
 # ─── Admin buyruqlari ────────────────────────────────────────────────────────
 
 @router.message(Command("today"))
+@router.message(F.text == kb.BTN_TODAY)
 async def cmd_today(message: Message) -> None:
     if not is_admin(message.from_user.id):
         return
     text = build_morning_message()
-    await message.answer(text, parse_mode="HTML")
+    await message.answer(text, parse_mode="HTML", reply_markup=kb.admin_menu_keyboard())
+
+
+@router.message(F.text == kb.BTN_SEND_GROUP)
+async def btn_send_duty_to_group(message: Message, bot: Bot) -> None:
+    """Admin istalgan vaqtda navbatchilar ro'yxatini guruhga yuboradi."""
+    if not is_admin(message.from_user.id):
+        return
+    ok = await send_duty_list_to_group(bot, manual=True)
+    if ok:
+        await message.answer(
+            "✅ <b>Navbatchilar ro'yxati guruhga yuborildi!</b>",
+            parse_mode="HTML",
+            reply_markup=kb.admin_menu_keyboard(),
+        )
+    else:
+        await message.answer(
+            "❌ Guruh ulanmagan.\n\n"
+            "Botni guruhga qo'shing va guruhda /setgroup yuboring.",
+            parse_mode="HTML",
+            reply_markup=kb.admin_menu_keyboard(),
+        )
 
 
 @router.message(Command("report_today"))
+@router.message(F.text == kb.BTN_REPORT)
 async def cmd_report_today(message: Message) -> None:
     if not is_admin(message.from_user.id):
         return
     text = build_evening_message()
-    await message.answer(text, parse_mode="HTML")
+    await message.answer(text, parse_mode="HTML", reply_markup=kb.admin_menu_keyboard())
 
 
 @router.message(Command("rating"))
+@router.message(F.text == kb.BTN_RATING)
 async def cmd_rating(message: Message) -> None:
     if not is_admin(message.from_user.id):
         return
@@ -352,10 +376,11 @@ async def cmd_rating(message: Message) -> None:
         lines.append(
             f"{medal} <b>{r['full_name']}</b> ({r['group_name']}) — {r['total_score']} ball"
         )
-    await message.answer("\n".join(lines), parse_mode="HTML")
+    await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=kb.admin_menu_keyboard())
 
 
 @router.message(Command("employees"))
+@router.message(F.text == kb.BTN_EMPLOYEES)
 async def cmd_employees(message: Message) -> None:
     if not is_admin(message.from_user.id):
         return
@@ -366,10 +391,11 @@ async def cmd_employees(message: Message) -> None:
         lines.append(
             f"• <b>{e['full_name']}</b> — {e['group_name']}, dam: {rest}"
         )
-    await message.answer("\n".join(lines), parse_mode="HTML")
+    await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=kb.admin_menu_keyboard())
 
 
 @router.message(Command("groups"))
+@router.message(F.text == kb.BTN_GROUPS)
 async def cmd_groups(message: Message) -> None:
     if not is_admin(message.from_user.id):
         return
@@ -380,7 +406,7 @@ async def cmd_groups(message: Message) -> None:
         emps = db.get_employees_by_group(g["id"])
         names = ", ".join(e["full_name"] for e in emps)
         lines.append(f"\n<b>{g['name']}</b>\n📅 Kunlar: {days}\n👤 {names}")
-    await message.answer("\n".join(lines), parse_mode="HTML")
+    await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=kb.admin_menu_keyboard())
 
 
 @router.message(Command("setgroup"))
@@ -739,21 +765,29 @@ def build_evening_message() -> str:
     return "\n".join(lines)
 
 
-async def send_morning_report(bot: Bot) -> None:
-    """Ertalab guruhga xabar yuborish."""
+async def send_duty_list_to_group(bot: Bot, *, manual: bool = False) -> bool:
+    """Navbatchilar ro'yxatini guruhga yuborish."""
     group_chat_id = db.get_group_chat_id()
     if not group_chat_id:
-        return
+        return False
     today = today_str()
-    if db.was_task_run("morning", today):
-        return
+    if not manual and db.was_task_run("morning", today):
+        return False
     try:
         text = build_morning_message()
         await bot.send_message(group_chat_id, text, parse_mode="HTML")
-        db.mark_task_run("morning", today)
-        logger.info("Ertalabki xabar yuborildi")
+        if not manual:
+            db.mark_task_run("morning", today)
+        logger.info("Navbatchilar ro'yxati yuborildi (manual=%s)", manual)
+        return True
     except Exception as e:
-        logger.error("Ertalabki xabar xatosi: %s", e)
+        logger.error("Navbatchilar yuborish xatosi: %s", e)
+        return False
+
+
+async def send_morning_report(bot: Bot) -> None:
+    """Ertalab 07:30 da avtomatik yuborish."""
+    await send_duty_list_to_group(bot, manual=False)
 
 
 async def send_evening_report(bot: Bot) -> None:

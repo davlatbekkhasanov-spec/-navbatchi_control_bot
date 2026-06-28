@@ -9,6 +9,15 @@ from aiogram.types import (
 
 from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 
+# ─── Admin tugmalari ─────────────────────────────────────────────────────────
+BTN_TODAY = "📋 Bugungi navbatchilar"
+BTN_SEND_GROUP = "📤 Guruhga yuborish"
+BTN_REPORT = "📊 Bugungi hisobot"
+BTN_RATING = "🏆 Oylik reyting"
+BTN_EMPLOYEES = "👥 Xodimlar"
+BTN_GROUPS = "🗂️ Navbatchi guruhlari"
+BTN_HELP = "ℹ️ Yordam"
+
 
 def main_menu_keyboard(is_on_duty: bool = False, has_started: bool = False) -> ReplyKeyboardMarkup:
     """Asosiy menyu."""
@@ -19,8 +28,27 @@ def main_menu_keyboard(is_on_duty: bool = False, has_started: bool = False) -> R
         builder.row(KeyboardButton(text="📸 OLDIN rasm yuborish"))
         builder.row(KeyboardButton(text="✅ Tozalash tugadi / KEYIN rasmlar"))
         builder.row(KeyboardButton(text="📤 Hisobotni yuborish"))
-    builder.row(KeyboardButton(text="ℹ️ Yordam"))
+    builder.row(KeyboardButton(text=BTN_HELP))
     return builder.as_markup(resize_keyboard=True)
+
+
+def admin_menu_keyboard() -> ReplyKeyboardMarkup:
+    """Admin asosiy menyu — chiroyli tugmalar."""
+    builder = ReplyKeyboardBuilder()
+    builder.row(
+        KeyboardButton(text=BTN_TODAY),
+        KeyboardButton(text=BTN_SEND_GROUP),
+    )
+    builder.row(
+        KeyboardButton(text=BTN_REPORT),
+        KeyboardButton(text=BTN_RATING),
+    )
+    builder.row(
+        KeyboardButton(text=BTN_EMPLOYEES),
+        KeyboardButton(text=BTN_GROUPS),
+    )
+    builder.row(KeyboardButton(text=BTN_HELP))
+    return builder.as_markup(resize_keyboard=True, input_field_placeholder="Menyudan tanlang...")
 
 
 def employee_select_keyboard(employees: list[dict]) -> InlineKeyboardMarkup:
