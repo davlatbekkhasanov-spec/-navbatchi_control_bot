@@ -18,6 +18,12 @@ jobs:
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
         run: |
-          railway variables --set "BOT_TOKEN=${{ secrets.BOT_TOKEN }}" --service "-navbatchi_control_bot"
-          railway variables --set "ADMIN_IDS=1432810519" --service "-navbatchi_control_bot"
-          railway redeploy --yes --from-source --service "-navbatchi_control_bot"
+          SVC="-navbatchi_control_bot"
+          railway variables --set "BOT_TOKEN=${{ secrets.BOT_TOKEN }}" --service "$SVC"
+          railway variables --set "ADMIN_IDS=1432810519" --service "$SVC"
+          railway variables --set "GROUP_CHAT_ID=-1001877019294" --service "$SVC"
+          railway variables --set "DATABASE_DIR=/data" --service "$SVC"
+          railway variables --set "YORDAMCHI_HUB_URL=https://davlat-yordamchi-bot-production.up.railway.app" --service "$SVC"
+          railway variables --set "YORDAMCHI_HUB_SECRET=${{ secrets.YORDAMCHI_HUB_SECRET }}" --service "$SVC"
+          railway variables --set "TZ=Asia/Tashkent" --service "$SVC"
+          railway redeploy --yes --from-source --service "$SVC"

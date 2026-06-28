@@ -26,6 +26,9 @@ from aiogram.types import (
 import config
 import database as db
 import keyboards as kb
+from access_middleware import TeamAccessMiddleware
+from hub_summary import compact_hub_summary
+from yordamchi_push import hub_status_line, push_to_yordamchi_hub, push_to_yordamchi_hub_background
 
 # ─── Logging ─────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -148,6 +151,41 @@ def calculate_submit_score(before_count: int, after_count: int) -> int:
     # Vaqtida yuborilgan (kechki hisobotdan oldin)
     score += config.SCORE_ON_TIME
     return score
+
+
+async def push_report_hub(report: dict, *, day: str | None = None) -> tuple[bool, str]:
+    """Kunlik hisobot ballini yordamchi hub ga yuborish."""
+    employee = db.get_employee_by_id(report["employee_id"])
+    if not employee or not employee.get("telegram_user_id"):
+        return False, "tg_id yo'q"
+    summary = compact_hub_summary(
+        score=int(report.get("score") or 0),
+        status=str(report.get("status") or "unknown"),
+        before=int(report.get("before_count") or 0),
+        after=int(report.get("after_count") or 0),
+    )
+    return await push_to_yordamchi_hub(
+        tg_id=int(employee["telegram_user_id"]),
+        bot_key="navbatchi",
+        summary=summary,
+        day_iso=day or report.get("date") or today_str(),
+    )
+
+
+async def replay_today_hub_reports() -> int:
+    """Bugungi hisobotlarni hub ga qayta yuborish (restartdan keyin)."""
+    today = today_str()
+    pushed = 0
+    for report in db.get_today_reports(today):
+        if report.get("status") not in ("accepted", "no_report"):
+            continue
+        try:
+            ok, _ = await push_report_hub(report, day=today)
+            if ok:
+                pushed += 1
+        except Exception as e:
+            logger.warning("Hub replay xato report=%s: %s", report.get("id"), e)
+    return pushed
 
 
 # ─── Yordamchi funksiyalar ───────────────────────────────────────────────────
@@ -1185,6 +1223,17 @@ async def submit_report(message: Message, state: FSMContext, bot: Bot) -> None:
     if not updated:
         await message.answer("ℹ️ Bu hisobot allaqachon yuborilgan.")
         return
+    push_to_yordamchi_hub_background(
+        tg_id=int((db.get_employee_by_id(updated["employee_id"]) or {}).get("telegram_user_id") or 0),
+        bot_key="navbatchi",
+        summary=compact_hub_summary(
+            score=int(updated["score"]),
+            status=updated["status"],
+            before=int(updated["before_count"] or 0),
+            after=int(updated["after_count"] or 0),
+        ),
+        day_iso=updated.get("date") or today_str(),
+    )
     await state.clear()
     admin_user = is_admin(message.from_user.id)
     home_markup = (
@@ -1302,6 +1351,17 @@ async def send_evening_report(bot: Bot) -> None:
         for e in employees:
             if e["id"] not in reports:
                 db.create_no_report_penalty(e["id"], group["id"], today)
+                penalty = db.get_report(e["id"], today)
+                if penalty and e.get("telegram_user_id"):
+                    push_to_yordamchi_hub_background(
+                        tg_id=int(e["telegram_user_id"]),
+                        bot_key="navbatchi",
+                        summary=compact_hub_summary(
+                            score=int(penalty["score"]),
+                            status=penalty["status"],
+                        ),
+                        day_iso=today,
+                    )
 
     try:
         text = build_evening_message()
@@ -1350,10 +1410,18 @@ async def main() -> None:
 
     logger.info("Ma'lumotlar bazasi tayyor: %s", config.DB_PATH)
     logger.info("Admin IDs: %s", config.ADMIN_IDS or "yo'q")
+    logger.info("Guruh: %s", config.GROUP_CHAT_ID or db.get_group_chat_id() or "—")
+    logger.info("Yordamchi hub: %s", hub_status_line())
 
     bot = Bot(token=config.BOT_TOKEN)
     dp = Dispatcher(storage=MemoryStorage())
+    dp.message.middleware(TeamAccessMiddleware())
+    dp.callback_query.middleware(TeamAccessMiddleware())
     dp.include_router(router)
+
+    replayed = await replay_today_hub_reports()
+    if replayed:
+        logger.info("Hub replay: %s ta hisobot yuborildi", replayed)
 
     asyncio.create_task(scheduler_loop(bot))
 

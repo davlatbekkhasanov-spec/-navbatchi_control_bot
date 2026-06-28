@@ -2,9 +2,11 @@
 
 import os
 import sys
-from pathlib import Path
 
 from dotenv import load_dotenv
+
+from employee_registry import DEFAULT_GROUP_ID
+from persist_data import resolve_db_path
 
 load_dotenv()
 
@@ -26,7 +28,7 @@ def _env_str(name: str, default: str = "") -> str:
     return raw.strip() if raw and raw.strip() else default
 
 
-BOT_VERSION = "2.4.0"
+BOT_VERSION = "2.5.0"
 
 # Telegram
 BOT_TOKEN: str = _env_str("BOT_TOKEN")
@@ -35,12 +37,18 @@ ADMIN_IDS: list[int] = [
     for x in _env_str("ADMIN_IDS").split(",")
     if x.strip().isdigit()
 ]
-GROUP_CHAT_ID: int | None = _env_int("GROUP_CHAT_ID")
+GROUP_CHAT_ID: int | None = _env_int("GROUP_CHAT_ID") or DEFAULT_GROUP_ID
 
-# SQLite
-BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = BASE_DIR / "data"
-DB_PATH = DATA_DIR / "navbatchi.db"
+# SQLite (Railway: DATABASE_DIR=/data volume)
+DB_PATH = resolve_db_path("navbatchi.db")
+DATA_DIR = DB_PATH.parent
+
+# Yordamchi hub (ballar yig'ilishi uchun)
+YORDAMCHI_HUB_URL: str = _env_str(
+    "YORDAMCHI_HUB_URL",
+    "https://davlat-yordamchi-bot-production.up.railway.app",
+)
+YORDAMCHI_HUB_SECRET: str = _env_str("YORDAMCHI_HUB_SECRET") or _env_str("HUB_SECRET")
 
 # Jadval vaqtlari (Toshkent vaqti, UTC+5)
 MORNING_HOUR = _env_int("MORNING_HOUR", 7) or 7

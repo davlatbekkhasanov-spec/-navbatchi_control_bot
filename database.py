@@ -7,6 +7,7 @@ from datetime import date, datetime
 from typing import Any
 
 import config
+from employee_registry import SHORT_NAME_TO_TG
 
 # Boshlang'ich xodimlar va guruhlar
 SEED_EMPLOYEES = [
@@ -48,6 +49,20 @@ def get_connection():
         raise
     finally:
         conn.close()
+
+
+def _sync_employee_telegram_ids(cur) -> None:
+    """Qisqa ismlarni jamoa Telegram ID bilan bog'lash."""
+    for row in cur.execute("SELECT id, full_name, telegram_user_id FROM employees").fetchall():
+        key = (row["full_name"] or "").strip().lower()
+        tg_id = SHORT_NAME_TO_TG.get(key)
+        if not tg_id:
+            continue
+        if row["telegram_user_id"] != tg_id:
+            cur.execute(
+                "UPDATE employees SET telegram_user_id = ? WHERE id = ?",
+                (tg_id, row["id"]),
+            )
 
 
 def init_db() -> None:
@@ -126,6 +141,7 @@ def init_db() -> None:
                    VALUES (?, ?, ?)""",
                 (name, rest_day, group_id),
             )
+        _sync_employee_telegram_ids(cur)
 
 
 # ─── Guruh va xodim so'rovlari ───────────────────────────────────────────────
