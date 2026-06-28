@@ -104,6 +104,11 @@ def init_db() -> None:
                 created_at TEXT NOT NULL,
                 UNIQUE(task_type, run_date)
             );
+
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
         """)
 
         # Guruhlarni seed qilish
@@ -357,3 +362,35 @@ def mark_task_run(task_type: str, run_date: str) -> None:
                VALUES (?, ?, ?)""",
             (task_type, run_date, now),
         )
+
+
+# ─── Sozlamalar ──────────────────────────────────────────────────────────────
+
+def get_setting(key: str) -> str | None:
+    """Sozlama qiymatini olish."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT value FROM settings WHERE key = ?", (key,)
+        ).fetchone()
+        return row["value"] if row else None
+
+
+def set_setting(key: str, value: str) -> None:
+    """Sozlama saqlash."""
+    with get_connection() as conn:
+        conn.execute(
+            """INSERT INTO settings (key, value) VALUES (?, ?)
+               ON CONFLICT(key) DO UPDATE SET value = excluded.value""",
+            (key, value),
+        )
+
+
+def get_group_chat_id() -> int | None:
+    """Guruh chat ID — avval .env, keyin bazadan."""
+    if config.GROUP_CHAT_ID:
+        return config.GROUP_CHAT_ID
+    val = get_setting("group_chat_id")
+    try:
+        return int(val) if val else None
+    except (TypeError, ValueError):
+        return None

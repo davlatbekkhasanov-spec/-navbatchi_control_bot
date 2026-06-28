@@ -16,6 +16,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import (
     CallbackQuery,
+    ChatMemberUpdated,
     InputMediaPhoto,
     Message,
 )
@@ -51,6 +52,22 @@ router = Router()
 
 def is_admin(user_id: int) -> bool:
     return user_id in config.ADMIN_IDS
+
+
+async def register_group_chat(bot: Bot, chat_id: int, chat_title: str | None = None) -> None:
+    """Guruh chat ID ni bazaga saqlash va adminlarga xabar."""
+    db.set_setting("group_chat_id", str(chat_id))
+    title = chat_title or str(chat_id)
+    logger.info("Guruh ulandi: %s (%s)", title, chat_id)
+    for admin_id in config.ADMIN_IDS:
+        try:
+            await bot.send_message(
+                admin_id,
+                f"✅ Guruh ulandi!\n📢 <b>{title}</b>\n🆔 <code>{chat_id}</code>",
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            logger.error("Admin %s ga guruh xabari xatosi: %s", admin_id, e)
 
 
 def now_tashkent() -> datetime:
@@ -279,7 +296,8 @@ async def cmd_help(message: Message) -> None:
             "/report_today — bugungi hisobot\n"
             "/rating — oylik reyting\n"
             "/employees — xodimlar\n"
-            "/groups — guruhlar"
+            "/groups — navbatchilik guruhlari\n"
+            "/setgroup — guruhni ulash"
         )
     await message.answer(text, parse_mode="HTML")
 
@@ -343,6 +361,39 @@ async def cmd_groups(message: Message) -> None:
         names = ", ".join(e["full_name"] for e in emps)
         lines.append(f"\n<b>{g['name']}</b>\n📅 Kunlar: {days}\n👤 {names}")
     await message.answer("\n".join(lines), parse_mode="HTML")
+
+
+@router.message(Command("setgroup"))
+async def cmd_setgroup(message: Message, bot: Bot) -> None:
+    """Guruh chat ID ni qo'lda ulash (admin guruhda yuboradi)."""
+    if not is_admin(message.from_user.id):
+        return
+    if message.chat.type not in ("group", "supergroup"):
+        await message.answer(
+            "❌ Bu buyruq faqat <b>guruh ichida</b> ishlaydi.\n"
+            "Botni guruhga qo'shing va u yerda /setgroup yuboring.",
+            parse_mode="HTML",
+        )
+        return
+    await register_group_chat(bot, message.chat.id, message.chat.title)
+    await message.answer(
+        f"✅ Guruh ulandi!\n🆔 <code>{message.chat.id}</code>",
+        parse_mode="HTML",
+    )
+
+
+@router.my_chat_member()
+async def bot_added_to_group(event: ChatMemberUpdated, bot: Bot) -> None:
+    """Bot guruhga qo'shilganda avtomatik ulash."""
+    try:
+        new_status = event.new_chat_member.status
+        if new_status not in ("member", "administrator"):
+            return
+        if event.chat.type not in ("group", "supergroup"):
+            return
+        await register_group_chat(bot, event.chat.id, event.chat.title)
+    except Exception as e:
+        logger.error("Guruh ulanish xatosi: %s", e)
 
 
 # ─── Ishni boshlash ──────────────────────────────────────────────────────────
@@ -667,14 +718,15 @@ def build_evening_message() -> str:
 
 async def send_morning_report(bot: Bot) -> None:
     """Ertalab guruhga xabar yuborish."""
-    if not config.GROUP_CHAT_ID:
+    group_chat_id = db.get_group_chat_id()
+    if not group_chat_id:
         return
     today = today_str()
     if db.was_task_run("morning", today):
         return
     try:
         text = build_morning_message()
-        await bot.send_message(config.GROUP_CHAT_ID, text, parse_mode="HTML")
+        await bot.send_message(group_chat_id, text, parse_mode="HTML")
         db.mark_task_run("morning", today)
         logger.info("Ertalabki xabar yuborildi")
     except Exception as e:
@@ -683,7 +735,8 @@ async def send_morning_report(bot: Bot) -> None:
 
 async def send_evening_report(bot: Bot) -> None:
     """Kechqurun guruhga yakuniy hisobot."""
-    if not config.GROUP_CHAT_ID:
+    group_chat_id = db.get_group_chat_id()
+    if not group_chat_id:
         return
     today = today_str()
     if db.was_task_run("evening", today):
@@ -699,7 +752,7 @@ async def send_evening_report(bot: Bot) -> None:
 
     try:
         text = build_evening_message()
-        await bot.send_message(config.GROUP_CHAT_ID, text, parse_mode="HTML")
+        await bot.send_message(group_chat_id, text, parse_mode="HTML")
         db.mark_task_run("evening", today)
         logger.info("Kechki xabar yuborildi")
     except Exception as e:
