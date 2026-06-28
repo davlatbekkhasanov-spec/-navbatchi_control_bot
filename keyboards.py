@@ -77,12 +77,13 @@ def employee_duty_reply_keyboard(
     *,
     has_started: bool = False,
     submitted: bool = False,
+    needs_redo: bool = False,
 ) -> ReplyKeyboardMarkup:
     """Navbatchi ish jarayoni — xodim va admin sinov uchun."""
+    if needs_redo or has_started:
+        return work_reply_keyboard()
     if submitted:
         return reply_base_keyboard([BTN_MY_STATUS])
-    if has_started:
-        return work_reply_keyboard()
     return reply_base_keyboard([BTN_WORK_START], [BTN_MY_STATUS])
 
 

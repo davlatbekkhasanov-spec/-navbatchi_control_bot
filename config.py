@@ -26,7 +26,7 @@ def _env_str(name: str, default: str = "") -> str:
     return raw.strip() if raw and raw.strip() else default
 
 
-BOT_VERSION = "2.3.1"
+BOT_VERSION = "2.3.2"
 
 # Telegram
 BOT_TOKEN: str = _env_str("BOT_TOKEN")

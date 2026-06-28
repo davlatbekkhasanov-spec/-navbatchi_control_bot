@@ -171,21 +171,24 @@ def get_employee_state(user_id: int) -> dict:
             "on_duty": False,
             "has_started": False,
             "submitted": False,
+            "needs_redo": False,
             "report": None,
         }
     on_duty = is_employee_on_duty(employee)
     if is_admin(user_id):
         on_duty = True
     report = db.get_report(employee["id"], today_str())
+    needs_redo = bool(report and report["status"] == "need_redo")
     has_started = bool(report and report["status"] == "started")
     submitted = bool(
-        report and report["status"] in ("submitted", "accepted", "need_redo", "rejected")
+        report and report["status"] in ("submitted", "accepted", "rejected")
     )
     return {
         "employee": employee,
         "on_duty": on_duty,
         "has_started": has_started,
         "submitted": submitted,
+        "needs_redo": needs_redo,
         "report": report,
     }
 
@@ -221,7 +224,9 @@ async def open_admin_duty_work(message: Message) -> None:
         f"👤 Profil: <b>{emp['full_name']}</b>\n"
         "Quyidagi tugmalar xodimlar bilan bir xil ishlaydi."
     )
-    if state["submitted"]:
+    if state["needs_redo"]:
+        text += "\n\n⚠️ <b>Qayta tozalash kerak!</b> ▶️ Ishni boshlang."
+    elif state["submitted"]:
         text += "\n\n✅ Bugungi hisobot allaqachon yuborilgan."
     elif state["has_started"]:
         text += "\n\n🔄 Ish jarayoni davom etmoqda."
@@ -233,6 +238,7 @@ async def open_admin_duty_work(message: Message) -> None:
         reply_markup=kb.employee_duty_reply_keyboard(
             has_started=state["has_started"],
             submitted=state["submitted"],
+            needs_redo=state["needs_redo"],
         ),
     )
 
@@ -263,6 +269,7 @@ async def send_my_status(message: Message) -> None:
         else kb.employee_duty_reply_keyboard(
             has_started=st["has_started"],
             submitted=st["submitted"],
+            needs_redo=st.get("needs_redo", False),
         )
     )
     await message.answer(txt, parse_mode="HTML", reply_markup=markup)
@@ -270,7 +277,7 @@ async def send_my_status(message: Message) -> None:
 
 async def open_employee_home(message: Message, state: dict) -> None:
     emp = state["employee"]
-    if state["has_started"]:
+    if state["has_started"] or state.get("needs_redo"):
         reply_markup = kb.work_reply_keyboard()
     elif state["on_duty"] and not state["submitted"]:
         reply_markup = kb.reply_base_keyboard([kb.BTN_WORK_START])
@@ -283,7 +290,9 @@ async def open_employee_home(message: Message, state: dict) -> None:
         reply_markup=reply_markup,
     )
     text = kb.EMP_MAIN_TEXT
-    if state["on_duty"] and not state["submitted"]:
+    if state.get("needs_redo"):
+        text += "\n\n⚠️ <b>Qayta tozalash kerak!</b> Rasmlarni qayta yuboring."
+    elif state["on_duty"] and not state["submitted"]:
         text += "\n\n✅ Bugun siz <b>navbatchilikdasiz</b>."
     elif not state["on_duty"]:
         text += "\n\nℹ️ Bugun sizning navbatchilik kuningiz <b>emas</b>."
@@ -319,13 +328,13 @@ async def _do_start_work(message: Message, state: FSMContext) -> None:
         if existing["status"] in ("submitted", "accepted"):
             await message.answer("✅ Siz bugun allaqachon hisobot yuborgansiz.")
             return
-        if existing["status"] in ("need_redo", "rejected") and admin_user:
-            db.update_report(existing["id"], status="started", submit_time=None, score=0)
+        if existing["status"] in ("need_redo", "rejected"):
+            db.prepare_report_for_redo(existing["id"])
             await state.set_state(ReportStates.waiting_before)
             await state.update_data(report_id=existing["id"])
             markup = kb.employee_duty_reply_keyboard(has_started=True)
             await message.answer(
-                "🔄 Qayta ishlash boshlandi. 📸 OLDIN rasmlarni yuboring.",
+                "🔄 Qayta ishlash boshlandi.\n📸 <b>OLDIN</b> rasmlarni yuboring.",
                 parse_mode="HTML",
                 reply_markup=markup,
             )
@@ -1163,6 +1172,53 @@ async def _mark_review_message_done(callback: CallbackQuery, status_label: str) 
         await _disable_review_keyboard(callback)
 
 
+async def _notify_employee_after_review(
+    bot: Bot,
+    employee: dict | None,
+    updated: dict,
+    status: str,
+    comment: str | None = None,
+) -> bool:
+    """Xodimga tasdiqlash / qayta tozalash xabarini yuborish."""
+    if not employee or not employee.get("telegram_user_id"):
+        return False
+
+    tg_id = employee["telegram_user_id"]
+    if status == "need_redo":
+        text = (
+            "⚠️ <b>Qayta tozalash kerak!</b>\n\n"
+            "Rahbar hisobotingizni qayta ishlashga yubordi.\n"
+            f"⭐ Joriy ball: <b>{updated['score']}</b>\n"
+        )
+        if comment:
+            text += f"\n💬 <b>Izoh:</b> {comment}\n"
+        text += (
+            "\n📸 Quyidagi tartibda qayta bajaring:\n"
+            "1️⃣ 📸 OLDIN rasm yuborish\n"
+            "2️⃣ ✅ Tozalash tugadi / KEYIN rasmlar\n"
+            "3️⃣ 📤 Hisobotni yuborish"
+        )
+        markup = kb.employee_duty_reply_keyboard(has_started=True)
+    elif status == "accepted":
+        text = (
+            "✅ <b>Hisobotingiz qabul qilindi!</b>\n\n"
+            f"⭐ Yakuniy ball: <b>{updated['score']}</b>\n"
+            "Rahmat, yaxshi ish!"
+        )
+        markup = kb.employee_duty_reply_keyboard(submitted=True)
+    else:
+        status_label = status_text(status)
+        text = f"📋 Hisobotingiz: <b>{status_label}</b>\n⭐ Ball: {updated['score']}"
+        markup = kb.reply_base_keyboard()
+
+    try:
+        await bot.send_message(tg_id, text, parse_mode="HTML", reply_markup=markup)
+        return True
+    except Exception as e:
+        logger.error("Xodimga xabar yuborishda xato: %s", e)
+        return False
+
+
 async def _process_review(
     callback: CallbackQuery, bot: Bot, report_id: int, status: str, score_delta: int
 ) -> None:
@@ -1174,19 +1230,22 @@ async def _process_review(
         await _disable_review_keyboard(callback)
         return
 
+    if status == "need_redo":
+        prepared = db.prepare_report_for_redo(report_id)
+        if prepared:
+            updated = prepared
+
     employee = db.get_employee_by_id(updated["employee_id"])
     status_label = status_text(status)
     await _mark_review_message_done(callback, status_label)
 
-    if employee and employee.get("telegram_user_id"):
-        try:
-            await bot.send_message(
-                employee["telegram_user_id"],
-                f"📋 Hisobotingiz: <b>{status_label}</b>\n⭐ Ball: {updated['score']}",
-                parse_mode="HTML",
-            )
-        except Exception as e:
-            logger.error("Xodimga xabar yuborishda xato: %s", e)
+    sent = await _notify_employee_after_review(bot, employee, updated, status)
+    if not sent and employee:
+        await callback.message.answer(
+            f"⚠️ <b>{employee['full_name']}</b> Telegramga bog'lanmagan — "
+            "xodimga xabar yuborilmadi!",
+            parse_mode="HTML",
+        )
 
     await callback.answer("✅ Bajarildi!")
 
@@ -1207,17 +1266,21 @@ async def _process_review_message(
         await message.answer("⚠️ Bu hisobot allaqachon ko'rib chiqilgan yoki topilmadi.")
         return
 
+    if status == "need_redo":
+        prepared = db.prepare_report_for_redo(report_id)
+        if prepared:
+            updated = prepared
+
     employee = db.get_employee_by_id(updated["employee_id"])
     status_label = status_text(status)
 
-    if employee and employee.get("telegram_user_id"):
-        try:
-            text = f"📋 Hisobotingiz: <b>{status_label}</b>\n⭐ Ball: {updated['score']}"
-            if comment:
-                text += f"\n💬 Izoh: {comment}"
-            await bot.send_message(employee["telegram_user_id"], text, parse_mode="HTML")
-        except Exception as e:
-            logger.error("Xodimga xabar yuborishda xato: %s", e)
+    sent = await _notify_employee_after_review(bot, employee, updated, status, comment)
+    if not sent and employee:
+        await message.answer(
+            f"⚠️ <b>{employee['full_name']}</b> Telegramga bog'lanmagan — "
+            "xodimga xabar yuborilmadi!",
+            parse_mode="HTML",
+        )
 
     await message.answer(
         f"✅ <b>{employee['full_name'] if employee else '?'}</b> — {status_label}\n"

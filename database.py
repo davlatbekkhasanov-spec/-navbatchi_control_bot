@@ -354,7 +354,22 @@ def try_finalize_report_review(
         return dict(row) if row else None
 
 
-def add_photo(report_id: int, file_id: str, photo_type: str) -> None:
+def prepare_report_for_redo(report_id: int) -> dict | None:
+    """Qayta tozalash — hisobotni yangidan boshlash uchun tayyorlaydi."""
+    with get_connection() as conn:
+        row = conn.execute("SELECT * FROM reports WHERE id = ?", (report_id,)).fetchone()
+        if not row or row["status"] != "need_redo":
+            return None
+        conn.execute("DELETE FROM report_photos WHERE report_id = ?", (report_id,))
+        conn.execute(
+            """UPDATE reports
+               SET status = 'started', submit_time = NULL,
+                   before_count = 0, after_count = 0
+               WHERE id = ? AND status = 'need_redo'""",
+            (report_id,),
+        )
+        row = conn.execute("SELECT * FROM reports WHERE id = ?", (report_id,)).fetchone()
+        return dict(row) if row else None
     """Hisobotga rasm qo'shish."""
     now = datetime.now().isoformat()
     with get_connection() as conn:
