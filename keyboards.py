@@ -25,6 +25,9 @@ BTN_REPORT_TODAY = "📊 Bugungi hisobot"
 BTN_RATING = "🏆 Oylik reyting"
 BTN_EMPLOYEES = "👥 Xodimlar ro'yxati"
 BTN_GROUPS = "🗂️ Navbatchi guruhlari"
+BTN_COMPLAINT = "⚠️ Shikoyat"
+BTN_COMPLAINT_SEND = "📤 Shikoyatni yuborish"
+BTN_COMPLAINT_CANCEL = "❌ Bekor qilish"
 
 # Eski reply tugmalar (ish jarayoni uchun)
 BTN_WORK_START = "▶️ Ishni boshlash"
@@ -69,6 +72,16 @@ def admin_reply_keyboard() -> ReplyKeyboardMarkup:
         KeyboardButton(text=BTN_MY_DUTY),
         KeyboardButton(text=BTN_MY_STATUS),
     )
+    builder.row(KeyboardButton(text=BTN_COMPLAINT))
+    builder.row(KeyboardButton(text=BTN_HOME))
+    return builder.as_markup(resize_keyboard=True, is_persistent=True)
+
+
+def admin_complaint_keyboard() -> ReplyKeyboardMarkup:
+    """Shikoyat yuborish jarayoni."""
+    builder = ReplyKeyboardBuilder()
+    builder.row(KeyboardButton(text=BTN_COMPLAINT_SEND))
+    builder.row(KeyboardButton(text=BTN_COMPLAINT_CANCEL))
     builder.row(KeyboardButton(text=BTN_HOME))
     return builder.as_markup(resize_keyboard=True, is_persistent=True)
 
@@ -77,10 +90,9 @@ def employee_duty_reply_keyboard(
     *,
     has_started: bool = False,
     submitted: bool = False,
-    needs_redo: bool = False,
 ) -> ReplyKeyboardMarkup:
     """Navbatchi ish jarayoni — xodim va admin sinov uchun."""
-    if needs_redo or has_started:
+    if has_started:
         return work_reply_keyboard()
     if submitted:
         return reply_base_keyboard([BTN_MY_STATUS])
@@ -251,32 +263,6 @@ def employee_work_inline() -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="✅ Hisobot yuborish", callback_data="a:work:hint:submit"),
     )
     builder.row(_back_row(MENU_EMP_MAIN))
-    return builder.as_markup()
-
-
-# ─── Admin tasdiqlash ────────────────────────────────────────────────────────
-
-def admin_review_keyboard(report_id: int) -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    builder.row(
-        InlineKeyboardButton(text="✅ Qabul qilindi", callback_data=f"review:accept:{report_id}")
-    )
-    builder.row(
-        InlineKeyboardButton(text="❌ Qayta tozalash", callback_data=f"review:redo:{report_id}")
-    )
-    builder.row(
-        InlineKeyboardButton(
-            text="⚠️ Izoh bilan qaytarish", callback_data=f"review:comment:{report_id}"
-        )
-    )
-    return builder.as_markup()
-
-
-def cancel_comment_keyboard() -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    builder.row(
-        InlineKeyboardButton(text="❌ Bekor qilish", callback_data="review:cancel_comment")
-    )
     return builder.as_markup()
 
 

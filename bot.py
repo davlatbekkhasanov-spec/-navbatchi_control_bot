@@ -44,8 +44,8 @@ class ReportStates(StatesGroup):
     collecting_after = State() # KEYIN rasmlar yig'ilmoqda (ixtiyoriy)
 
 
-class AdminStates(StatesGroup):
-    waiting_comment = State()  # Admin izoh kiritmoqda
+class ComplaintStates(StatesGroup):
+    collecting_photos = State()
 
 
 # ─── Router ──────────────────────────────────────────────────────────────────
@@ -171,24 +171,21 @@ def get_employee_state(user_id: int) -> dict:
             "on_duty": False,
             "has_started": False,
             "submitted": False,
-            "needs_redo": False,
             "report": None,
         }
     on_duty = is_employee_on_duty(employee)
     if is_admin(user_id):
         on_duty = True
     report = db.get_report(employee["id"], today_str())
-    needs_redo = bool(report and report["status"] == "need_redo")
     has_started = bool(report and report["status"] == "started")
     submitted = bool(
-        report and report["status"] in ("submitted", "accepted", "rejected")
+        report and report["status"] in ("submitted", "accepted")
     )
     return {
         "employee": employee,
         "on_duty": on_duty,
         "has_started": has_started,
         "submitted": submitted,
-        "needs_redo": needs_redo,
         "report": report,
     }
 
@@ -224,9 +221,7 @@ async def open_admin_duty_work(message: Message) -> None:
         f"👤 Profil: <b>{emp['full_name']}</b>\n"
         "Quyidagi tugmalar xodimlar bilan bir xil ishlaydi."
     )
-    if state["needs_redo"]:
-        text += "\n\n⚠️ <b>Qayta tozalash kerak!</b> ▶️ Ishni boshlang."
-    elif state["submitted"]:
+    if state["submitted"]:
         text += "\n\n✅ Bugungi hisobot allaqachon yuborilgan."
     elif state["has_started"]:
         text += "\n\n🔄 Ish jarayoni davom etmoqda."
@@ -238,7 +233,6 @@ async def open_admin_duty_work(message: Message) -> None:
         reply_markup=kb.employee_duty_reply_keyboard(
             has_started=state["has_started"],
             submitted=state["submitted"],
-            needs_redo=state["needs_redo"],
         ),
     )
 
@@ -269,7 +263,6 @@ async def send_my_status(message: Message) -> None:
         else kb.employee_duty_reply_keyboard(
             has_started=st["has_started"],
             submitted=st["submitted"],
-            needs_redo=st.get("needs_redo", False),
         )
     )
     await message.answer(txt, parse_mode="HTML", reply_markup=markup)
@@ -277,7 +270,7 @@ async def send_my_status(message: Message) -> None:
 
 async def open_employee_home(message: Message, state: dict) -> None:
     emp = state["employee"]
-    if state["has_started"] or state.get("needs_redo"):
+    if state["has_started"]:
         reply_markup = kb.work_reply_keyboard()
     elif state["on_duty"] and not state["submitted"]:
         reply_markup = kb.reply_base_keyboard([kb.BTN_WORK_START])
@@ -290,9 +283,7 @@ async def open_employee_home(message: Message, state: dict) -> None:
         reply_markup=reply_markup,
     )
     text = kb.EMP_MAIN_TEXT
-    if state.get("needs_redo"):
-        text += "\n\n⚠️ <b>Qayta tozalash kerak!</b> Rasmlarni qayta yuboring."
-    elif state["on_duty"] and not state["submitted"]:
+    if state["on_duty"] and not state["submitted"]:
         text += "\n\n✅ Bugun siz <b>navbatchilikdasiz</b>."
     elif not state["on_duty"]:
         text += "\n\nℹ️ Bugun sizning navbatchilik kuningiz <b>emas</b>."
@@ -328,17 +319,6 @@ async def _do_start_work(message: Message, state: FSMContext) -> None:
         if existing["status"] in ("submitted", "accepted"):
             await message.answer("✅ Siz bugun allaqachon hisobot yuborgansiz.")
             return
-        if existing["status"] in ("need_redo", "rejected"):
-            db.prepare_report_for_redo(existing["id"])
-            await state.set_state(ReportStates.waiting_before)
-            await state.update_data(report_id=existing["id"])
-            markup = kb.employee_duty_reply_keyboard(has_started=True)
-            await message.answer(
-                "🔄 Qayta ishlash boshlandi.\n📸 <b>OLDIN</b> rasmlarni yuboring.",
-                parse_mode="HTML",
-                reply_markup=markup,
-            )
-            return
         if existing["status"] == "started":
             markup = kb.employee_duty_reply_keyboard(has_started=True)
             await message.answer(
@@ -372,45 +352,72 @@ async def _do_start_work(message: Message, state: FSMContext) -> None:
         await _send_menu(message, kb.EMP_WORK_TEXT, kb.employee_work_inline())
 
 
-async def send_admin_review(bot: Bot, report: dict, employee: dict) -> None:
-    """Adminlarga hisobotni tasdiqlash uchun yuborish."""
-    photos = db.get_report_photos(report["id"])
-    group = db.get_all_groups()
-    group_name = next((g["name"] for g in group if g["id"] == report["group_id"]), "?")
-
+async def build_complaint_message() -> tuple[str, list[dict], dict | None]:
+    """Shikoyat matni va bugungi navbatchilar."""
+    today = now_tashkent()
+    group, employees = db.get_today_duty_employees()
+    day_name = config.DAY_NAMES_UZ_CAP[today.weekday()]
+    if employees:
+        names_block = "\n".join(f"  • <b>{e['full_name']}</b>" for e in employees)
+    else:
+        names_block = "  • <i>Bugun navbatchilik yo'q</i>"
     text = (
-        f"📋 <b>Yangi hisobot</b>\n\n"
-        f"👤 Xodim: <b>{employee['full_name']}</b>\n"
-        f"👥 Guruh: <b>{group_name}</b>\n"
-        f"📅 Sana: <b>{report['date']}</b>\n"
-        f"⏰ Boshlash: <b>{format_time(report['start_time'])}</b>\n"
-        f"⏰ Tugatish: <b>{format_time(report['submit_time'])}</b>\n"
-        f"📷 OLDIN rasmlar: <b>{report['before_count']}</b>\n"
-        f"📷 KEYIN rasmlar: <b>{report['after_count']}</b>\n"
-        f"⭐ Ball: <b>{report['score']}</b>"
+        "⚠️ <b>SHIKOYAT</b>\n\n"
+        f"📅 {day_name}, {today.strftime('%d.%m.%Y')}\n"
+        f"👥 Guruh: <b>{group['name'] if group else '—'}</b>\n\n"
+        f"👤 <b>Bugungi navbatchilar:</b>\n{names_block}\n\n"
+        "📸 Tozalash sifati qoniqarli emas — rasvo joylar aniqlandi."
     )
+    return text, employees, group
 
-    markup = kb.admin_review_keyboard(report["id"])
 
-    for admin_id in config.ADMIN_IDS:
+async def send_complaint(bot: Bot, photo_ids: list[str]) -> tuple[bool, str]:
+    """Shikoyatni guruhga va navbatchilarga yuborish."""
+    text, employees, _group = await build_complaint_message()
+    group_chat_id = db.get_group_chat_id()
+    sent_any = False
+
+    if group_chat_id:
         try:
-            await bot.send_message(admin_id, text, parse_mode="HTML", reply_markup=markup)
-            if photos:
-                # Media group (max 10 ta)
-                for i in range(0, len(photos), 10):
-                    chunk = photos[i : i + 10]
-                    media = []
-                    for j, photo in enumerate(chunk):
-                        label = "📷 OLDIN" if photo["photo_type"] == "before" else "📷 KEYIN"
-                        cap = f"{label} ({i + j + 1}/{len(photos)})" if j == 0 else None
-                        media.append(
-                            InputMediaPhoto(media=photo["photo_file_id"], caption=cap)
-                            if cap
-                            else InputMediaPhoto(media=photo["photo_file_id"])
-                        )
-                    await bot.send_media_group(admin_id, media=media)
+            await bot.send_message(group_chat_id, text, parse_mode="HTML")
+            sent_any = True
+            for i in range(0, len(photo_ids), 10):
+                chunk = photo_ids[i : i + 10]
+                media = []
+                for j, fid in enumerate(chunk):
+                    cap = "📷 Shikoyat rasmi" if j == 0 and i == 0 else None
+                    media.append(
+                        InputMediaPhoto(media=fid, caption=cap)
+                        if cap
+                        else InputMediaPhoto(media=fid)
+                    )
+                await bot.send_media_group(group_chat_id, media=media)
         except Exception as e:
-            logger.error("Admin %s ga yuborishda xato: %s", admin_id, e)
+            logger.error("Guruhga shikoyat yuborishda xato: %s", e)
+
+    notify_text = text + "\n\n⚠️ Iltimos, tezda bartaraf eting!"
+    for emp in employees:
+        tg_id = emp.get("telegram_user_id")
+        if not tg_id:
+            continue
+        try:
+            await bot.send_message(tg_id, notify_text, parse_mode="HTML")
+            sent_any = True
+            if photo_ids:
+                for i in range(0, len(photo_ids), 10):
+                    chunk = photo_ids[i : i + 10]
+                    media = [
+                        InputMediaPhoto(media=fid) for fid in chunk
+                    ]
+                    await bot.send_media_group(tg_id, media=media)
+        except Exception as e:
+            logger.error("Xodim %s ga shikoyat xatosi: %s", emp["full_name"], e)
+
+    if sent_any:
+        return True, "✅ Shikoyat yuborildi!"
+    if not group_chat_id and not any(e.get("telegram_user_id") for e in employees):
+        return False, "❌ Guruh ulanmagan va navbatchilar botda yo'q."
+    return False, "❌ Shikoyat yuborilmadi. Guruh yoki xodimlarni tekshiring."
 
 
 # ─── /start va yordam ────────────────────────────────────────────────────────
@@ -643,8 +650,8 @@ def _help_text(is_admin_user: bool) -> str:
         "4️⃣ Hisobotni yuborish\n\n"
         "<b>Ball tizimi:</b>\n"
         f"• Vaqtida: +{config.SCORE_ON_TIME} | OLDIN: +{config.SCORE_BEFORE_PHOTO}\n"
-        f"• KEYIN: +{config.SCORE_AFTER_PHOTO} | Qabul: +{config.SCORE_ACCEPTED}\n"
-        f"• Qayta tozalash: {config.SCORE_REDO} | Yo'q: {config.SCORE_NO_REPORT}"
+        f"• KEYIN: +{config.SCORE_AFTER_PHOTO} | Avto qabul: +{config.SCORE_ACCEPTED}\n"
+        f"• Yo'q hisobot: {config.SCORE_NO_REPORT}"
     )
     if is_admin_user:
         text += (
@@ -652,7 +659,8 @@ def _help_text(is_admin_user: bool) -> str:
             "📋 Navbatchilik — ro'yxat va guruhga yuborish\n"
             "📊 Hisobotlar — kunlik va oylik\n"
             "👥 Ma'lumotnoma — xodimlar va guruhlar\n"
-            "🧹 Navbatchi ishi — xodimlar kabi sinov qilish"
+            "🧹 Navbatchi ishi — sinov rejimi\n"
+            "⚠️ Shikoyat — rasvo joy rasmlari + bugungi navbatchilar"
         )
     return text
 
@@ -1067,6 +1075,66 @@ async def receive_after_photo(message: Message, state: FSMContext) -> None:
     )
 
 
+# ─── Admin shikoyat ──────────────────────────────────────────────────────────
+
+@router.message(F.text == kb.BTN_COMPLAINT)
+async def start_complaint(message: Message, state: FSMContext) -> None:
+    if not is_admin(message.from_user.id):
+        return
+    text, employees, _ = await build_complaint_message()
+    await state.set_state(ComplaintStates.collecting_photos)
+    await state.update_data(complaint_photos=[])
+    names = ", ".join(e["full_name"] for e in employees) if employees else "—"
+    await message.answer(
+        text
+        + "\n\n📸 <b>Rasvo joylarning rasmlarini yuboring.</b>\n"
+        f"Tayyor bo'lgach — <b>{kb.BTN_COMPLAINT_SEND}</b> tugmasini bosing.\n\n"
+        f"👤 Navbatchilar: {names}",
+        parse_mode="HTML",
+        reply_markup=kb.admin_complaint_keyboard(),
+    )
+
+
+@router.message(ComplaintStates.collecting_photos, F.photo)
+async def complaint_add_photo(message: Message, state: FSMContext) -> None:
+    if not is_admin(message.from_user.id):
+        return
+    data = await state.get_data()
+    photos: list[str] = list(data.get("complaint_photos", []))
+    photos.append(message.photo[-1].file_id)
+    await state.update_data(complaint_photos=photos)
+    await message.answer(
+        f"✅ Rasm qabul qilindi! (jami: {len(photos)} ta)\n"
+        f"Tayyor bo'lgach — <b>{kb.BTN_COMPLAINT_SEND}</b> bosing.",
+        parse_mode="HTML",
+    )
+
+
+@router.message(ComplaintStates.collecting_photos, F.text == kb.BTN_COMPLAINT_SEND)
+async def complaint_submit(message: Message, state: FSMContext, bot: Bot) -> None:
+    if not is_admin(message.from_user.id):
+        return
+    data = await state.get_data()
+    photos: list[str] = list(data.get("complaint_photos", []))
+    if not photos:
+        await message.answer("❌ Kamida bitta rasm yuboring!")
+        return
+    ok, result = await send_complaint(bot, photos)
+    await state.clear()
+    await message.answer(result, reply_markup=kb.admin_reply_keyboard())
+
+
+@router.message(ComplaintStates.collecting_photos, F.text == kb.BTN_COMPLAINT_CANCEL)
+async def complaint_cancel(message: Message, state: FSMContext) -> None:
+    if not is_admin(message.from_user.id):
+        return
+    await state.clear()
+    await message.answer(
+        "❌ Shikoyat bekor qilindi.",
+        reply_markup=kb.admin_reply_keyboard(),
+    )
+
+
 @router.message(F.photo)
 async def receive_photo_without_state(message: Message, state: FSMContext) -> None:
     """FSM holati yo'qolsa ham ish jarayonidagi rasmni qabul qilish."""
@@ -1083,6 +1151,7 @@ async def receive_photo_without_state(message: Message, state: FSMContext) -> No
         ReportStates.waiting_before.state,
         ReportStates.collecting_after.state,
         ReportStates.waiting_after.state,
+        ComplaintStates.collecting_photos.state,
     ):
         return
     if report["before_count"] == 0:
@@ -1124,216 +1193,11 @@ async def submit_report(message: Message, state: FSMContext, bot: Bot) -> None:
         else kb.reply_base_keyboard()
     )
     await message.answer(
-        f"📤 Hisobot yuborildi!\n\n"
+        f"✅ <b>Hisobot qabul qilindi!</b>\n\n"
         f"📷 OLDIN: {updated['before_count']} ta\n"
         f"📷 KEYIN: {updated['after_count']} ta\n"
-        f"⭐ Ball: {score}\n\n"
-        "⏳ Rahbar tasdiqlashini kuting...",
+        f"⭐ Ball: {updated['score']}",
         reply_markup=home_markup,
-    )
-
-    # Adminlarga yuborish
-    await send_admin_review(bot, updated, employee)
-
-
-# ─── Admin tasdiqlash ────────────────────────────────────────────────────────
-
-@router.callback_query(F.data.startswith("review:accept:"))
-async def review_accept(callback: CallbackQuery, bot: Bot) -> None:
-    if not is_admin(callback.from_user.id):
-        await callback.answer("Ruxsat yo'q!", show_alert=True)
-        return
-    report_id = int(callback.data.split(":")[2])
-    await _process_review(callback, bot, report_id, "accepted", config.SCORE_ACCEPTED)
-
-
-@router.callback_query(F.data.startswith("review:redo:"))
-async def review_redo(callback: CallbackQuery, bot: Bot) -> None:
-    if not is_admin(callback.from_user.id):
-        await callback.answer("Ruxsat yo'q!", show_alert=True)
-        return
-    report_id = int(callback.data.split(":")[2])
-    await _process_review(callback, bot, report_id, "need_redo", config.SCORE_REDO)
-
-
-@router.callback_query(F.data.startswith("review:comment:"))
-async def review_comment_start(callback: CallbackQuery, state: FSMContext) -> None:
-    if not is_admin(callback.from_user.id):
-        await callback.answer("Ruxsat yo'q!", show_alert=True)
-        return
-    report_id = int(callback.data.split(":")[2])
-    report = db.get_report_by_id(report_id)
-    if not report:
-        await callback.answer("Hisobot topilmadi!", show_alert=True)
-        return
-    if report["status"] != "submitted":
-        await callback.answer("⚠️ Bu hisobot allaqachon ko'rib chiqilgan!", show_alert=True)
-        await _disable_review_keyboard(callback)
-        return
-    await state.set_state(AdminStates.waiting_comment)
-    await state.update_data(report_id=report_id)
-    await callback.message.answer(
-        "⚠️ Izohni yozing:",
-        reply_markup=kb.cancel_comment_keyboard(),
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data == "review:cancel_comment")
-async def review_cancel_comment(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.clear()
-    await callback.message.edit_text("❌ Izoh bekor qilindi.")
-    await callback.answer()
-
-
-@router.message(AdminStates.waiting_comment)
-async def review_comment_submit(message: Message, state: FSMContext, bot: Bot) -> None:
-    if not is_admin(message.from_user.id):
-        return
-    data = await state.get_data()
-    report_id = data.get("report_id")
-    if not report_id:
-        return
-    comment = message.text
-    await state.clear()
-    await _process_review_message(
-        message, bot, report_id, "need_redo", config.SCORE_REDO, comment
-    )
-
-
-async def _disable_review_keyboard(callback: CallbackQuery) -> None:
-    """Tasdiqlash tugmalarini o'chirish."""
-    try:
-        await callback.message.edit_reply_markup(reply_markup=None)
-    except Exception:
-        pass
-
-
-async def _mark_review_message_done(callback: CallbackQuery, status_label: str) -> None:
-    """Hisobot xabariga natija qo'shish va tugmalarni olib tashlash."""
-    try:
-        text = callback.message.html_text or callback.message.text or ""
-        if status_label not in text:
-            text += f"\n\n———\n✅ <b>{status_label.upper()}</b>"
-        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=None)
-    except Exception:
-        await _disable_review_keyboard(callback)
-
-
-async def _notify_employee_after_review(
-    bot: Bot,
-    employee: dict | None,
-    updated: dict,
-    status: str,
-    comment: str | None = None,
-) -> bool:
-    """Xodimga tasdiqlash / qayta tozalash xabarini yuborish."""
-    if not employee or not employee.get("telegram_user_id"):
-        return False
-
-    tg_id = employee["telegram_user_id"]
-    if status == "need_redo":
-        text = (
-            "⚠️ <b>Qayta tozalash kerak!</b>\n\n"
-            "Rahbar hisobotingizni qayta ishlashga yubordi.\n"
-            f"⭐ Joriy ball: <b>{updated['score']}</b>\n"
-        )
-        if comment:
-            text += f"\n💬 <b>Izoh:</b> {comment}\n"
-        text += (
-            "\n📸 Quyidagi tartibda qayta bajaring:\n"
-            "1️⃣ 📸 OLDIN rasm yuborish\n"
-            "2️⃣ ✅ Tozalash tugadi / KEYIN rasmlar\n"
-            "3️⃣ 📤 Hisobotni yuborish"
-        )
-        markup = kb.employee_duty_reply_keyboard(has_started=True)
-    elif status == "accepted":
-        text = (
-            "✅ <b>Hisobotingiz qabul qilindi!</b>\n\n"
-            f"⭐ Yakuniy ball: <b>{updated['score']}</b>\n"
-            "Rahmat, yaxshi ish!"
-        )
-        markup = kb.employee_duty_reply_keyboard(submitted=True)
-    else:
-        status_label = status_text(status)
-        text = f"📋 Hisobotingiz: <b>{status_label}</b>\n⭐ Ball: {updated['score']}"
-        markup = kb.reply_base_keyboard()
-
-    try:
-        await bot.send_message(tg_id, text, parse_mode="HTML", reply_markup=markup)
-        return True
-    except Exception as e:
-        logger.error("Xodimga xabar yuborishda xato: %s", e)
-        return False
-
-
-async def _process_review(
-    callback: CallbackQuery, bot: Bot, report_id: int, status: str, score_delta: int
-) -> None:
-    updated = db.try_finalize_report_review(
-        report_id, status=status, score_delta=score_delta
-    )
-    if not updated:
-        await callback.answer("⚠️ Bu hisobot allaqachon ko'rib chiqilgan!", show_alert=True)
-        await _disable_review_keyboard(callback)
-        return
-
-    if status == "need_redo":
-        prepared = db.prepare_report_for_redo(report_id)
-        if prepared:
-            updated = prepared
-
-    employee = db.get_employee_by_id(updated["employee_id"])
-    status_label = status_text(status)
-    await _mark_review_message_done(callback, status_label)
-
-    sent = await _notify_employee_after_review(bot, employee, updated, status)
-    if not sent and employee:
-        await callback.message.answer(
-            f"⚠️ <b>{employee['full_name']}</b> Telegramga bog'lanmagan — "
-            "xodimga xabar yuborilmadi!",
-            parse_mode="HTML",
-        )
-
-    await callback.answer("✅ Bajarildi!")
-
-
-async def _process_review_message(
-    message: Message,
-    bot: Bot,
-    report_id: int,
-    status: str,
-    score_delta: int,
-    comment: str | None = None,
-) -> None:
-    """Izoh bilan qaytarish."""
-    updated = db.try_finalize_report_review(
-        report_id, status=status, score_delta=score_delta, comment=comment
-    )
-    if not updated:
-        await message.answer("⚠️ Bu hisobot allaqachon ko'rib chiqilgan yoki topilmadi.")
-        return
-
-    if status == "need_redo":
-        prepared = db.prepare_report_for_redo(report_id)
-        if prepared:
-            updated = prepared
-
-    employee = db.get_employee_by_id(updated["employee_id"])
-    status_label = status_text(status)
-
-    sent = await _notify_employee_after_review(bot, employee, updated, status, comment)
-    if not sent and employee:
-        await message.answer(
-            f"⚠️ <b>{employee['full_name']}</b> Telegramga bog'lanmagan — "
-            "xodimga xabar yuborilmadi!",
-            parse_mode="HTML",
-        )
-
-    await message.answer(
-        f"✅ <b>{employee['full_name'] if employee else '?'}</b> — {status_label}\n"
-        f"⭐ Yangi ball: {updated['score']}",
-        parse_mode="HTML",
     )
 
 
