@@ -298,6 +298,62 @@ def update_report(report_id: int, **fields: Any) -> None:
         conn.execute(f"UPDATE reports SET {cols} WHERE id = ?", vals)
 
 
+def get_report_by_id(report_id: int) -> dict | None:
+    """Hisobot ID bo'yicha."""
+    with get_connection() as conn:
+        row = conn.execute("SELECT * FROM reports WHERE id = ?", (report_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def try_submit_report(report_id: int, *, score: int, submit_time: str) -> dict | None:
+    """Faqat 'started' holatidagi hisobotni yuborilgan deb belgilaydi."""
+    with get_connection() as conn:
+        conn.execute(
+            """UPDATE reports
+               SET status = 'submitted', score = ?, submit_time = ?
+               WHERE id = ? AND status = 'started'""",
+            (score, submit_time, report_id),
+        )
+        if conn.total_changes == 0:
+            return None
+        row = conn.execute("SELECT * FROM reports WHERE id = ?", (report_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def try_finalize_report_review(
+    report_id: int,
+    *,
+    status: str,
+    score_delta: int,
+    comment: str | None = None,
+) -> dict | None:
+    """Faqat 'submitted' hisobotni tasdiqlaydi — qayta bosish ishlamaydi."""
+    with get_connection() as conn:
+        row = conn.execute("SELECT * FROM reports WHERE id = ?", (report_id,)).fetchone()
+        if not row:
+            return None
+        report = dict(row)
+        if report["status"] != "submitted":
+            return None
+        new_score = report["score"] + score_delta
+        if comment is not None:
+            conn.execute(
+                """UPDATE reports SET status = ?, score = ?, admin_comment = ?
+                   WHERE id = ? AND status = 'submitted'""",
+                (status, new_score, comment, report_id),
+            )
+        else:
+            conn.execute(
+                """UPDATE reports SET status = ?, score = ?
+                   WHERE id = ? AND status = 'submitted'""",
+                (status, new_score, report_id),
+            )
+        if conn.total_changes == 0:
+            return None
+        row = conn.execute("SELECT * FROM reports WHERE id = ?", (report_id,)).fetchone()
+        return dict(row) if row else None
+
+
 def add_photo(report_id: int, file_id: str, photo_type: str) -> None:
     """Hisobotga rasm qo'shish."""
     now = datetime.now().isoformat()

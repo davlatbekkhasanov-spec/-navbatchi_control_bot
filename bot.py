@@ -1055,15 +1055,11 @@ async def submit_report(message: Message, state: FSMContext, bot: Bot) -> None:
 
     score = calculate_submit_score(report["before_count"], report["after_count"])
     now = datetime.now().isoformat()
-    db.update_report(
-        report["id"],
-        status="submitted",
-        submit_time=now,
-        score=score,
-    )
+    updated = db.try_submit_report(report["id"], score=score, submit_time=now)
+    if not updated:
+        await message.answer("ℹ️ Bu hisobot allaqachon yuborilgan.")
+        return
     await state.clear()
-
-    updated = db.get_report(employee["id"], today_str())
     admin_user = is_admin(message.from_user.id)
     home_markup = (
         kb.admin_reply_keyboard()
@@ -1109,6 +1105,14 @@ async def review_comment_start(callback: CallbackQuery, state: FSMContext) -> No
         await callback.answer("Ruxsat yo'q!", show_alert=True)
         return
     report_id = int(callback.data.split(":")[2])
+    report = db.get_report_by_id(report_id)
+    if not report:
+        await callback.answer("Hisobot topilmadi!", show_alert=True)
+        return
+    if report["status"] != "submitted":
+        await callback.answer("⚠️ Bu hisobot allaqachon ko'rib chiqilgan!", show_alert=True)
+        await _disable_review_keyboard(callback)
+        return
     await state.set_state(AdminStates.waiting_comment)
     await state.update_data(report_id=report_id)
     await callback.message.answer(
@@ -1140,10 +1144,50 @@ async def review_comment_submit(message: Message, state: FSMContext, bot: Bot) -
     )
 
 
+async def _disable_review_keyboard(callback: CallbackQuery) -> None:
+    """Tasdiqlash tugmalarini o'chirish."""
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+
+
+async def _mark_review_message_done(callback: CallbackQuery, status_label: str) -> None:
+    """Hisobot xabariga natija qo'shish va tugmalarni olib tashlash."""
+    try:
+        text = callback.message.html_text or callback.message.text or ""
+        if status_label not in text:
+            text += f"\n\n———\n✅ <b>{status_label.upper()}</b>"
+        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=None)
+    except Exception:
+        await _disable_review_keyboard(callback)
+
+
 async def _process_review(
     callback: CallbackQuery, bot: Bot, report_id: int, status: str, score_delta: int
 ) -> None:
-    await _process_review_message(callback.message, bot, report_id, status, score_delta)
+    updated = db.try_finalize_report_review(
+        report_id, status=status, score_delta=score_delta
+    )
+    if not updated:
+        await callback.answer("⚠️ Bu hisobot allaqachon ko'rib chiqilgan!", show_alert=True)
+        await _disable_review_keyboard(callback)
+        return
+
+    employee = db.get_employee_by_id(updated["employee_id"])
+    status_label = status_text(status)
+    await _mark_review_message_done(callback, status_label)
+
+    if employee and employee.get("telegram_user_id"):
+        try:
+            await bot.send_message(
+                employee["telegram_user_id"],
+                f"📋 Hisobotingiz: <b>{status_label}</b>\n⭐ Ball: {updated['score']}",
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            logger.error("Xodimga xabar yuborishda xato: %s", e)
+
     await callback.answer("✅ Bajarildi!")
 
 
@@ -1155,26 +1199,20 @@ async def _process_review_message(
     score_delta: int,
     comment: str | None = None,
 ) -> None:
-    """Hisobot holatini yangilash va xodimga xabar."""
-    with db.get_connection() as conn:
-        row = conn.execute("SELECT * FROM reports WHERE id = ?", (report_id,)).fetchone()
-    if not row:
-        await message.answer("❌ Hisobot topilmadi.")
+    """Izoh bilan qaytarish."""
+    updated = db.try_finalize_report_review(
+        report_id, status=status, score_delta=score_delta, comment=comment
+    )
+    if not updated:
+        await message.answer("⚠️ Bu hisobot allaqachon ko'rib chiqilgan yoki topilmadi.")
         return
-    report = dict(row)
-    new_score = report["score"] + score_delta
-    fields = {"status": status, "score": new_score}
-    if comment:
-        fields["admin_comment"] = comment
-    db.update_report(report_id, **fields)
 
-    employee = db.get_employee_by_id(report["employee_id"])
+    employee = db.get_employee_by_id(updated["employee_id"])
     status_label = status_text(status)
 
-    # Xodimga xabar
     if employee and employee.get("telegram_user_id"):
         try:
-            text = f"📋 Hisobotingiz: <b>{status_label}</b>\n⭐ Ball: {new_score}"
+            text = f"📋 Hisobotingiz: <b>{status_label}</b>\n⭐ Ball: {updated['score']}"
             if comment:
                 text += f"\n💬 Izoh: {comment}"
             await bot.send_message(employee["telegram_user_id"], text, parse_mode="HTML")
@@ -1183,7 +1221,7 @@ async def _process_review_message(
 
     await message.answer(
         f"✅ <b>{employee['full_name'] if employee else '?'}</b> — {status_label}\n"
-        f"⭐ Yangi ball: {new_score}",
+        f"⭐ Yangi ball: {updated['score']}",
         parse_mode="HTML",
     )
 
