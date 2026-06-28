@@ -7,6 +7,7 @@ foto-hisobot yig'ish, rahbar tasdiqlashi va oylik reyting.
 
 import asyncio
 import logging
+import sys
 from datetime import date, datetime, timedelta, timezone
 
 from aiogram import Bot, Dispatcher, F, Router
@@ -17,6 +18,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import (
     CallbackQuery,
     ChatMemberUpdated,
+    ErrorEvent,
     InputMediaPhoto,
     Message,
 )
@@ -48,6 +50,21 @@ class AdminStates(StatesGroup):
 
 # ─── Router ──────────────────────────────────────────────────────────────────
 router = Router()
+
+
+@router.errors()
+async def global_error_handler(event: ErrorEvent) -> bool:
+    """Kutilmagan xatolarni ushlash — bot crash bo'lmasin."""
+    logger.exception("Handler xatosi: %s", event.exception)
+    update = event.update
+    try:
+        if update.message:
+            await update.message.answer("❌ Xatolik yuz berdi. Qayta urinib ko'ring.")
+        elif update.callback_query:
+            await update.callback_query.answer("❌ Xatolik!", show_alert=True)
+    except Exception:
+        pass
+    return True
 
 
 def is_admin(user_id: int) -> bool:
@@ -190,57 +207,60 @@ async def send_admin_review(bot: Bot, report: dict, employee: dict) -> None:
 
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext) -> None:
-    await state.clear()
-    user_id = message.from_user.id
+    try:
+        await state.clear()
+        user_id = message.from_user.id
 
-    if is_admin(user_id):
-        await message.answer(
-            "👋 Salom, <b>Admin</b>!\n\n"
-            "🧹 <b>Navbatchi</b> botiga xush kelibsiz.\n\n"
-            "📌 Buyruqlar:\n"
-            "/today — bugungi navbatchilar\n"
-            "/report_today — bugungi hisobot\n"
-            "/rating — oylik reyting\n"
-            "/employees — xodimlar ro'yxati\n"
-            "/groups — navbatchilik guruhlari\n"
-            "/help — yordam",
-            parse_mode="HTML",
-        )
-        return
-
-    employee, group, duty_employees, report = await get_employee_context(user_id)
-
-    if not employee:
-        # Bog'lanmagan — bugungi navbatchilardan tanlash
-        if duty_employees:
+        if is_admin(user_id):
             await message.answer(
-                "👋 Salom!\n\n"
-                "🧹 <b>Navbatchi</b> botiga xush kelibsiz.\n"
-                "Iltimos, o'zingizni tanlang:",
+                "👋 Salom, <b>Admin</b>!\n\n"
+                "🧹 <b>Navbatchi</b> botiga xush kelibsiz.\n\n"
+                "📌 Buyruqlar:\n"
+                "/today — bugungi navbatchilar\n"
+                "/report_today — bugungi hisobot\n"
+                "/rating — oylik reyting\n"
+                "/employees — xodimlar ro'yxati\n"
+                "/groups — navbatchilik guruhlari\n"
+                "/help — yordam",
                 parse_mode="HTML",
-                reply_markup=kb.employee_select_keyboard(duty_employees),
             )
-        else:
-            await message.answer(
-                "👋 Salom!\n\n"
-                "🧹 Bugun navbatchilik yo'q.\n"
-                "Navbatchilik kuningizda qayta kiring.",
-            )
-        return
+            return
 
-    on_duty = is_employee_on_duty(employee)
-    has_started = report is not None and report["status"] in ("started",)
+        employee, group, duty_employees, report = await get_employee_context(user_id)
 
-    await message.answer(
-        f"👋 Salom, <b>{employee['full_name']}</b>!\n\n"
-        + (
-            "📋 Bugun siz navbatchilikdasiz. Ishni boshlang!"
-            if on_duty
-            else "ℹ️ Bugun sizning navbatchilik kuningiz emas."
-        ),
-        parse_mode="HTML",
-        reply_markup=kb.main_menu_keyboard(on_duty, has_started),
-    )
+        if not employee:
+            if duty_employees:
+                await message.answer(
+                    "👋 Salom!\n\n"
+                    "🧹 <b>Navbatchi</b> botiga xush kelibsiz.\n"
+                    "Iltimos, o'zingizni tanlang:",
+                    parse_mode="HTML",
+                    reply_markup=kb.employee_select_keyboard(duty_employees),
+                )
+            else:
+                await message.answer(
+                    "👋 Salom!\n\n"
+                    "🧹 Bugun navbatchilik yo'q.\n"
+                    "Navbatchilik kuningizda qayta kiring.",
+                )
+            return
+
+        on_duty = is_employee_on_duty(employee)
+        has_started = report is not None and report["status"] in ("started",)
+
+        await message.answer(
+            f"👋 Salom, <b>{employee['full_name']}</b>!\n\n"
+            + (
+                "📋 Bugun siz navbatchilikdasiz. Ishni boshlang!"
+                if on_duty
+                else "ℹ️ Bugun sizning navbatchilik kuningiz emas."
+            ),
+            parse_mode="HTML",
+            reply_markup=kb.main_menu_keyboard(on_duty, has_started),
+        )
+    except Exception as e:
+        logger.exception("/start xatosi: %s", e)
+        await message.answer("❌ Xatolik yuz berdi. /start ni qayta yuboring.")
 
 
 @router.callback_query(F.data.startswith("link:"))
@@ -423,6 +443,9 @@ async def start_work(message: Message, state: FSMContext) -> None:
             return
 
     group, _ = db.get_today_duty_employees()
+    if not group:
+        await message.answer("❌ Bugun navbatchilik guruh topilmadi.")
+        return
     report = db.create_report(employee["id"], group["id"], today)
     await state.set_state(ReportStates.waiting_before)
     await state.update_data(report_id=report["id"])
@@ -786,25 +809,48 @@ async def scheduler_loop(bot: Bot) -> None:
 
 async def main() -> None:
     if not config.BOT_TOKEN:
-        logger.error("BOT_TOKEN o'rnatilmagan! .env faylini tekshiring.")
-        return
+        logger.error("❌ BOT_TOKEN topilmadi! Railway Variables ga BOT_TOKEN qo'shing.")
+        sys.exit(1)
 
-    db.init_db()
+    try:
+        db.init_db()
+    except Exception as e:
+        logger.exception("❌ Ma'lumotlar bazasi xatosi: %s", e)
+        sys.exit(1)
+
     logger.info("Ma'lumotlar bazasi tayyor: %s", config.DB_PATH)
+    logger.info("Admin IDs: %s", config.ADMIN_IDS or "yo'q")
 
     bot = Bot(token=config.BOT_TOKEN)
     dp = Dispatcher(storage=MemoryStorage())
     dp.include_router(router)
 
-    # Scheduler fon vazifasi
     asyncio.create_task(scheduler_loop(bot))
 
     logger.info("Navbatchi bot ishga tushmoqda...")
     try:
-        await dp.start_polling(bot)
+        await dp.start_polling(
+            bot,
+            drop_pending_updates=True,
+            allowed_updates=[
+                "message",
+                "callback_query",
+                "my_chat_member",
+                "chat_member",
+            ],
+        )
+    except Exception as e:
+        logger.exception("❌ Polling xatosi: %s", e)
+        sys.exit(1)
     finally:
         await bot.session.close()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Bot to'xtatildi.")
+    except Exception as e:
+        logger.exception("❌ Kritik xato: %s", e)
+        sys.exit(1)

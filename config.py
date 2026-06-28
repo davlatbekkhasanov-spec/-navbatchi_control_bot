@@ -1,22 +1,39 @@
 """Bot sozlamalari — .env faylidan o'qiladi."""
 
 import os
+import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
 
 load_dotenv()
 
+
+def _env_int(name: str, default: int | None = None) -> int | None:
+    """Butun son o'qish — noto'g'ri qiymatda default qaytaradi."""
+    raw = os.getenv(name)
+    if raw is None or not str(raw).strip():
+        return default
+    try:
+        return int(str(raw).strip())
+    except ValueError:
+        print(f"[config] Ogohlantirish: {name} noto'g'ri — default ishlatiladi", file=sys.stderr)
+        return default
+
+
+def _env_str(name: str, default: str = "") -> str:
+    raw = os.getenv(name)
+    return raw.strip() if raw and raw.strip() else default
+
+
 # Telegram
-BOT_TOKEN: str = os.getenv("BOT_TOKEN", "")
+BOT_TOKEN: str = _env_str("BOT_TOKEN")
 ADMIN_IDS: list[int] = [
     int(x.strip())
-    for x in os.getenv("ADMIN_IDS", "").split(",")
+    for x in _env_str("ADMIN_IDS").split(",")
     if x.strip().isdigit()
 ]
-GROUP_CHAT_ID: int | None = (
-    int(os.getenv("GROUP_CHAT_ID")) if os.getenv("GROUP_CHAT_ID") else None
-)
+GROUP_CHAT_ID: int | None = _env_int("GROUP_CHAT_ID")
 
 # SQLite
 BASE_DIR = Path(__file__).resolve().parent
@@ -24,10 +41,10 @@ DATA_DIR = BASE_DIR / "data"
 DB_PATH = DATA_DIR / "navbatchi.db"
 
 # Jadval vaqtlari (Toshkent vaqti, UTC+5)
-MORNING_HOUR = int(os.getenv("MORNING_HOUR", "8"))
-MORNING_MINUTE = int(os.getenv("MORNING_MINUTE", "0"))
-EVENING_HOUR = int(os.getenv("EVENING_HOUR", "20"))
-EVENING_MINUTE = int(os.getenv("EVENING_MINUTE", "0"))
+MORNING_HOUR = _env_int("MORNING_HOUR", 8) or 8
+MORNING_MINUTE = _env_int("MORNING_MINUTE", 0) or 0
+EVENING_HOUR = _env_int("EVENING_HOUR", 20) or 20
+EVENING_MINUTE = _env_int("EVENING_MINUTE", 0) or 0
 
 # Ball tizimi
 SCORE_ON_TIME = 10
