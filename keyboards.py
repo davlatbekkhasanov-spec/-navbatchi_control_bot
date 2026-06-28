@@ -17,6 +17,8 @@ BTN_ADMIN_DUTY = "📋 Navbatchilik"
 BTN_ADMIN_REPORTS = "📊 Hisobotlar"
 BTN_ADMIN_INFO = "👥 Ma'lumotnoma"
 BTN_ADMIN_HELP = "ℹ️ Yordam"
+BTN_MY_DUTY = "🧹 Navbatchi ishi"
+BTN_MY_STATUS = "📋 Mening holatim"
 BTN_TODAY_VIEW = "📋 Bugungi navbatchilar"
 BTN_TODAY_SEND = "📤 Guruhga yuborish"
 BTN_REPORT_TODAY = "📊 Bugungi hisobot"
@@ -63,8 +65,25 @@ def admin_reply_keyboard() -> ReplyKeyboardMarkup:
         KeyboardButton(text=BTN_ADMIN_INFO),
         KeyboardButton(text=BTN_ADMIN_HELP),
     )
+    builder.row(
+        KeyboardButton(text=BTN_MY_DUTY),
+        KeyboardButton(text=BTN_MY_STATUS),
+    )
     builder.row(KeyboardButton(text=BTN_HOME))
     return builder.as_markup(resize_keyboard=True, is_persistent=True)
+
+
+def employee_duty_reply_keyboard(
+    *,
+    has_started: bool = False,
+    submitted: bool = False,
+) -> ReplyKeyboardMarkup:
+    """Navbatchi ish jarayoni — xodim va admin sinov uchun."""
+    if submitted:
+        return reply_base_keyboard([BTN_MY_STATUS])
+    if has_started:
+        return work_reply_keyboard()
+    return reply_base_keyboard([BTN_WORK_START], [BTN_MY_STATUS])
 
 
 def admin_duty_reply_keyboard() -> ReplyKeyboardMarkup:

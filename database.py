@@ -19,6 +19,7 @@ SEED_EMPLOYEES = [
     ("Tulqin", 1, 3),      # seshanba, 3-guruh
     ("Tolib", 6, 2),       # yakshanba, 2-guruh
     ("Farrux", 5, 1),      # shanba, 1-guruh
+    ("Admin sinov", 6, 1), # admin sinov profili
 ]
 
 SEED_GROUPS = [
@@ -170,6 +171,40 @@ def get_today_duty_employees(target_date: date | None = None) -> tuple[dict | No
         return None, []
     employees = get_employees_by_group(group["id"], exclude_rest_day=weekday)
     return group, employees
+
+
+ADMIN_DEMO_NAME = "Admin sinov"
+
+
+def get_group_by_id(group_id: int) -> dict | None:
+    """Guruh ID bo'yicha."""
+    with get_connection() as conn:
+        row = conn.execute("SELECT * FROM duty_groups WHERE id = ?", (group_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def ensure_admin_demo_employee(telegram_id: int) -> dict:
+    """Admin uchun sinov profilini bog'lash (haqiqiy xodimlarga tegmaydi)."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM employees WHERE full_name = ? AND is_active = 1",
+            (ADMIN_DEMO_NAME,),
+        ).fetchone()
+        if not row:
+            conn.execute(
+                "INSERT INTO employees (full_name, rest_day, group_id) VALUES (?, ?, ?)",
+                (ADMIN_DEMO_NAME, 6, 1),
+            )
+            row = conn.execute(
+                "SELECT * FROM employees WHERE full_name = ?",
+                (ADMIN_DEMO_NAME,),
+            ).fetchone()
+    demo = dict(row)
+    existing = get_employee_by_telegram_id(telegram_id)
+    if existing:
+        return existing
+    link_employee_telegram(demo["id"], telegram_id)
+    return get_employee_by_id(demo["id"]) or demo
 
 
 def get_employee_by_telegram_id(telegram_id: int) -> dict | None:
