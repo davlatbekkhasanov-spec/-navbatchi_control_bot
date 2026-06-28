@@ -162,6 +162,127 @@ async def get_employee_context(user_id: int) -> tuple[dict | None, dict | None, 
     return employee, group, duty_employees, report
 
 
+def get_employee_state(user_id: int) -> dict:
+    """Xodim holati — menyu logikasi uchun."""
+    employee = db.get_employee_by_telegram_id(user_id)
+    if not employee:
+        return {
+            "employee": None,
+            "on_duty": False,
+            "has_started": False,
+            "submitted": False,
+            "report": None,
+        }
+    on_duty = is_employee_on_duty(employee)
+    report = db.get_report(employee["id"], today_str())
+    has_started = bool(report and report["status"] == "started")
+    submitted = bool(
+        report and report["status"] in ("submitted", "accepted", "need_redo", "rejected")
+    )
+    return {
+        "employee": employee,
+        "on_duty": on_duty,
+        "has_started": has_started,
+        "submitted": submitted,
+        "report": report,
+    }
+
+
+async def _send_menu(message: Message, text: str, markup) -> None:
+    """Inline menyu yuborish."""
+    await message.answer(text, parse_mode="HTML", reply_markup=markup)
+
+
+async def _edit_or_send_menu(callback: CallbackQuery, text: str, markup) -> None:
+    """Callback da menyu yangilash."""
+    try:
+        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=markup)
+    except Exception:
+        await callback.message.answer(text, parse_mode="HTML", reply_markup=markup)
+
+
+async def open_admin_home(message: Message) -> None:
+    await message.answer(
+        kb.ADMIN_MAIN_TEXT,
+        parse_mode="HTML",
+        reply_markup=kb.reply_base_keyboard(),
+    )
+    await _send_menu(message, "👇 <b>Admin menyu:</b>", kb.admin_main_inline())
+
+
+async def open_employee_home(message: Message, state: dict) -> None:
+    emp = state["employee"]
+    if state["has_started"]:
+        reply_markup = kb.work_reply_keyboard()
+    elif state["on_duty"] and not state["submitted"]:
+        reply_markup = kb.reply_base_keyboard([kb.BTN_WORK_START])
+    else:
+        reply_markup = kb.reply_base_keyboard()
+
+    await message.answer(
+        f"👋 <b>{emp['full_name']}</b>",
+        parse_mode="HTML",
+        reply_markup=reply_markup,
+    )
+    text = kb.EMP_MAIN_TEXT
+    if state["on_duty"] and not state["submitted"]:
+        text += "\n\n✅ Bugun siz <b>navbatchilikdasiz</b>."
+    elif not state["on_duty"]:
+        text += "\n\nℹ️ Bugun sizning navbatchilik kuningiz <b>emas</b>."
+    await _send_menu(
+        message,
+        text,
+        kb.employee_main_inline(
+            on_duty=state["on_duty"],
+            has_started=state["has_started"],
+            submitted=state["submitted"],
+        ),
+    )
+
+
+async def _do_start_work(message: Message, state: FSMContext) -> None:
+    """Ishni boshlash — umumiy logika."""
+    employee = db.get_employee_by_telegram_id(message.from_user.id)
+    if not employee:
+        await message.answer("❌ Avval o'zingizni tanlang (/start).")
+        return
+
+    if not is_employee_on_duty(employee):
+        await message.answer("ℹ️ Bugun sizning navbatchilik kuningiz emas.")
+        return
+
+    today = today_str()
+    existing = db.get_report(employee["id"], today)
+    if existing:
+        if existing["status"] in ("submitted", "accepted"):
+            await message.answer("✅ Siz bugun allaqachon hisobot yuborgansiz.")
+            return
+        if existing["status"] == "started":
+            await message.answer(
+                "🔄 Ish allaqachon boshlangan. Rasmlarni yuboring.",
+                reply_markup=kb.work_reply_keyboard(),
+            )
+            await _send_menu(message, kb.EMP_WORK_TEXT, kb.employee_work_inline())
+            return
+
+    group, _ = db.get_today_duty_employees()
+    if not group:
+        await message.answer("❌ Bugun navbatchilik guruh topilmadi.")
+        return
+
+    report = db.create_report(employee["id"], group["id"], today)
+    await state.set_state(ReportStates.waiting_before)
+    await state.update_data(report_id=report["id"])
+
+    await message.answer(
+        f"▶️ Ish boshlandi! ⏰ {format_time(report['start_time'])}\n\n"
+        "📸 Avval <b>OLDIN</b> rasmlarni yuboring.",
+        parse_mode="HTML",
+        reply_markup=kb.work_reply_keyboard(),
+    )
+    await _send_menu(message, kb.EMP_WORK_TEXT, kb.employee_work_inline())
+
+
 async def send_admin_review(bot: Bot, report: dict, employee: dict) -> None:
     """Adminlarga hisobotni tasdiqlash uchun yuborish."""
     photos = db.get_report_photos(report["id"])
@@ -212,15 +333,7 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
         user_id = message.from_user.id
 
         if is_admin(user_id):
-            await message.answer(
-                "👋 Salom, <b>Admin</b>!\n\n"
-                "🧹 <b>Navbatchi</b> botiga xush kelibsiz.\n\n"
-                "⏰ Har kuni <b>07:30</b> da navbatchilar ro'yxati "
-                "guruhga avtomatik yuboriladi.\n\n"
-                "👇 Quyidagi tugmalardan foydalaning:",
-                parse_mode="HTML",
-                reply_markup=kb.admin_menu_keyboard(),
-            )
+            await open_admin_home(message)
             return
 
         employee, group, duty_employees, report = await get_employee_context(user_id)
@@ -239,22 +352,11 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
                     "👋 Salom!\n\n"
                     "🧹 Bugun navbatchilik yo'q.\n"
                     "Navbatchilik kuningizda qayta kiring.",
+                    reply_markup=kb.reply_base_keyboard(),
                 )
             return
 
-        on_duty = is_employee_on_duty(employee)
-        has_started = report is not None and report["status"] in ("started",)
-
-        await message.answer(
-            f"👋 Salom, <b>{employee['full_name']}</b>!\n\n"
-            + (
-                "📋 Bugun siz navbatchilikdasiz. Ishni boshlang!"
-                if on_duty
-                else "ℹ️ Bugun sizning navbatchilik kuningiz emas."
-            ),
-            parse_mode="HTML",
-            reply_markup=kb.main_menu_keyboard(on_duty, has_started),
-        )
+        await open_employee_home(message, get_employee_state(user_id))
     except Exception as e:
         logger.exception("/start xatosi: %s", e)
         await message.answer("❌ Xatolik yuz berdi. /start ni qayta yuboring.")
@@ -276,95 +378,245 @@ async def link_employee(callback: CallbackQuery) -> None:
         parse_mode="HTML",
     )
 
-    on_duty = is_employee_on_duty(employee)
-    report = db.get_report(employee_id, today_str())
-    has_started = report is not None and report["status"] == "started"
-
-    await callback.message.answer(
-        "📋 Menyudan foydalaning:",
-        reply_markup=kb.main_menu_keyboard(on_duty, has_started),
-    )
+    await callback.message.answer("📋 Menyudan foydalaning:", reply_markup=kb.reply_base_keyboard())
+    await open_employee_home(callback.message, get_employee_state(callback.from_user.id))
 
 
-@router.message(Command("help"))
-@router.message(F.text == kb.BTN_HELP)
-async def cmd_help(message: Message) -> None:
+@router.message(F.text == kb.BTN_HOME)
+async def btn_home_menu(message: Message, state: FSMContext) -> None:
+    """Bosh menyu — admin yoki xodim ichki menyusi."""
+    await state.clear()
+    user_id = message.from_user.id
+    if is_admin(user_id):
+        await open_admin_home(message)
+        return
+    emp_state = get_employee_state(user_id)
+    if not emp_state["employee"]:
+        await message.answer("❌ Avval /start bilan ro'yxatdan o'ting.")
+        return
+    await open_employee_home(message, emp_state)
+
+
+def _help_text(is_admin_user: bool) -> str:
     text = (
         "ℹ️ <b>Yordam</b>\n\n"
         "🧹 <b>Navbatchi</b> — ombor tozaligi boti.\n\n"
-        "<b>Xodimlar uchun:</b>\n"
-        "1️⃣ ▶️ Ishni boshlash\n"
-        "2️⃣ 📸 OLDIN rasm yuborish (majburiy)\n"
-        "3️⃣ ✅ Tozalash tugadi / KEYIN rasmlar\n"
-        "4️⃣ KEYIN rasmlar yuborish (ixtiyoriy)\n"
-        "5️⃣ 📤 Hisobotni yuborish\n\n"
+        "<b>Navbatchilik tartibi:</b>\n"
+        "1️⃣ Ishni boshlash\n"
+        "2️⃣ OLDIN rasm (majburiy)\n"
+        "3️⃣ KEYIN rasm (ixtiyoriy)\n"
+        "4️⃣ Hisobotni yuborish\n\n"
         "<b>Ball tizimi:</b>\n"
-        f"• Vaqtida yuborish: +{config.SCORE_ON_TIME}\n"
-        f"• OLDIN rasm: +{config.SCORE_BEFORE_PHOTO}\n"
-        f"• KEYIN rasm: +{config.SCORE_AFTER_PHOTO}\n"
-        f"• Qabul qilindi: +{config.SCORE_ACCEPTED}\n"
-        f"• Qayta tozalash: {config.SCORE_REDO}\n"
-        f"• Hisobot yo'q: {config.SCORE_NO_REPORT}"
+        f"• Vaqtida: +{config.SCORE_ON_TIME} | OLDIN: +{config.SCORE_BEFORE_PHOTO}\n"
+        f"• KEYIN: +{config.SCORE_AFTER_PHOTO} | Qabul: +{config.SCORE_ACCEPTED}\n"
+        f"• Qayta tozalash: {config.SCORE_REDO} | Yo'q: {config.SCORE_NO_REPORT}"
     )
-    if is_admin(message.from_user.id):
+    if is_admin_user:
         text += (
-            "\n\n<b>Admin tugmalari:</b>\n"
-            f"{kb.BTN_TODAY} — ro'yxatni ko'rish\n"
-            f"{kb.BTN_SEND_GROUP} — guruhga yuborish\n"
-            f"{kb.BTN_REPORT} — bugungi hisobot\n"
-            f"{kb.BTN_RATING} — oylik reyting\n"
-            f"{kb.BTN_EMPLOYEES} — xodimlar\n"
-            f"{kb.BTN_GROUPS} — navbatchi guruhlari\n"
-            "/setgroup — guruhni ulash (guruh ichida)"
+            "\n\n<b>Admin bo'limlari:</b>\n"
+            "📋 Navbatchilik — ro'yxat va guruhga yuborish\n"
+            "📊 Hisobotlar — kunlik va oylik\n"
+            "👥 Ma'lumotnoma — xodimlar va guruhlar"
         )
-        await message.answer(text, parse_mode="HTML", reply_markup=kb.admin_menu_keyboard())
+    return text
+
+
+@router.message(Command("help"))
+async def cmd_help(message: Message) -> None:
+    admin_user = is_admin(message.from_user.id)
+    text = _help_text(admin_user)
+    back = kb.admin_result_inline(kb.MENU_ADMIN_MAIN) if admin_user else kb.admin_result_inline(kb.MENU_EMP_MAIN)
+    await message.answer(text, parse_mode="HTML", reply_markup=back)
+
+
+# ─── Ichki menyu navigatsiya ─────────────────────────────────────────────────
+
+@router.callback_query(F.data.startswith("m:"))
+async def menu_navigate(callback: CallbackQuery) -> None:
+    """Ichki menyu — bo'limlar orasida harakat."""
+    if not is_admin(callback.from_user.id) and callback.data.startswith("m:adm"):
+        await callback.answer("Ruxsat yo'q!", show_alert=True)
         return
-    await message.answer(text, parse_mode="HTML")
+
+    data = callback.data
+    if data == kb.MENU_ADMIN_MAIN:
+        await _edit_or_send_menu(callback, kb.ADMIN_MAIN_TEXT, kb.admin_main_inline())
+    elif data == kb.MENU_ADMIN_DUTY:
+        await _edit_or_send_menu(callback, kb.ADMIN_DUTY_TEXT, kb.admin_duty_inline())
+    elif data == kb.MENU_ADMIN_REPORTS:
+        await _edit_or_send_menu(callback, kb.ADMIN_REPORTS_TEXT, kb.admin_reports_inline())
+    elif data == kb.MENU_ADMIN_INFO:
+        await _edit_or_send_menu(callback, kb.ADMIN_INFO_TEXT, kb.admin_info_inline())
+    elif data == kb.MENU_EMP_MAIN:
+        st = get_employee_state(callback.from_user.id)
+        text = kb.EMP_MAIN_TEXT
+        if st["on_duty"] and not st["submitted"]:
+            text += "\n\n✅ Bugun siz <b>navbatchilikdasiz</b>."
+        elif not st["on_duty"]:
+            text += "\n\nℹ️ Bugun navbatchilik kuningiz <b>emas</b>."
+        await _edit_or_send_menu(
+            callback,
+            text,
+            kb.employee_main_inline(
+                on_duty=st["on_duty"],
+                has_started=st["has_started"],
+                submitted=st["submitted"],
+            ),
+        )
+    elif data == kb.MENU_EMP_WORK:
+        await _edit_or_send_menu(callback, kb.EMP_WORK_TEXT, kb.employee_work_inline())
+    await callback.answer()
 
 
-# ─── Admin buyruqlari ────────────────────────────────────────────────────────
+@router.callback_query(F.data.startswith("a:"))
+async def menu_action(callback: CallbackQuery, state: FSMContext, bot: Bot) -> None:
+    """Menyu amallari."""
+    data = callback.data
+    user_id = callback.from_user.id
+
+    # Ish jarayoni yo'riqnomasi
+    if data.startswith("a:work:hint:"):
+        hints = {
+            "a:work:hint:before": "📸 Quyidagi reply tugmani bosing:\n<b>📸 OLDIN rasm yuborish</b>",
+            "a:work:hint:after": "✅ Quyidagi reply tugmani bosing:\n<b>✅ Tozalash tugadi / KEYIN rasmlar</b>",
+            "a:work:hint:submit": "📤 Quyidagi reply tugmani bosing:\n<b>📤 Hisobotni yuborish</b>",
+        }
+        await callback.answer()
+        await callback.message.answer(hints.get(data, ""), parse_mode="HTML")
+        return
+
+    if data == kb.ACT_WORK_START:
+        await callback.answer()
+        await _do_start_work(callback.message, state)
+        return
+
+    if data == kb.ACT_HELP:
+        admin_user = is_admin(user_id)
+        back = kb.admin_result_inline(
+            kb.MENU_ADMIN_MAIN if admin_user else kb.MENU_EMP_MAIN
+        )
+        await callback.answer()
+        await callback.message.answer(_help_text(admin_user), parse_mode="HTML", reply_markup=back)
+        return
+
+    if data == kb.ACT_STATUS:
+        st = get_employee_state(user_id)
+        if not st["employee"]:
+            await callback.answer("Ro'yxatdan o'tmagan!", show_alert=True)
+            return
+        emp = st["employee"]
+        r = st["report"]
+        if not r:
+            txt = f"📋 <b>{emp['full_name']}</b>\n\n⏳ Bugun hali ish boshlanmagan."
+        else:
+            txt = (
+                f"📋 <b>{emp['full_name']}</b>\n\n"
+                f"Holat: {status_emoji(r['status'])} <b>{status_text(r['status'])}</b>\n"
+                f"📷 OLDIN: {r['before_count']} | KEYIN: {r['after_count']}\n"
+                f"⭐ Ball: {r['score']}"
+            )
+        await callback.answer()
+        await callback.message.answer(txt, parse_mode="HTML", reply_markup=kb.admin_result_inline(kb.MENU_EMP_MAIN))
+        return
+
+    # Admin amallari
+    if not is_admin(user_id):
+        await callback.answer("Ruxsat yo'q!", show_alert=True)
+        return
+
+    if data == kb.ACT_TODAY_VIEW:
+        await callback.answer()
+        await callback.message.answer(
+            build_morning_message(),
+            parse_mode="HTML",
+            reply_markup=kb.admin_result_inline(kb.MENU_ADMIN_DUTY),
+        )
+    elif data == kb.ACT_TODAY_SEND:
+        ok = await send_duty_list_to_group(bot, manual=True)
+        await callback.answer("✅ Yuborildi!" if ok else "❌ Guruh ulanmagan!", show_alert=not ok)
+        if ok:
+            await callback.message.answer(
+                "✅ Navbatchilar ro'yxati guruhga yuborildi!",
+                reply_markup=kb.admin_result_inline(kb.MENU_ADMIN_DUTY),
+            )
+        else:
+            await callback.message.answer(
+                "❌ Guruh ulanmagan. Guruhda /setgroup yuboring.",
+                reply_markup=kb.admin_result_inline(kb.MENU_ADMIN_DUTY),
+            )
+    elif data == kb.ACT_REPORT:
+        await callback.answer()
+        await callback.message.answer(
+            build_evening_message(),
+            parse_mode="HTML",
+            reply_markup=kb.admin_result_inline(kb.MENU_ADMIN_REPORTS),
+        )
+    elif data == kb.ACT_RATING:
+        now = now_tashkent()
+        ratings = db.get_monthly_rating(now.year, now.month)
+        lines = [f"🏆 <b>Oylik reyting — {now.strftime('%B %Y')}</b>\n"]
+        for i, r in enumerate(ratings, 1):
+            medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
+            lines.append(f"{medal} <b>{r['full_name']}</b> ({r['group_name']}) — {r['total_score']} ball")
+        await callback.answer()
+        await callback.message.answer(
+            "\n".join(lines),
+            parse_mode="HTML",
+            reply_markup=kb.admin_result_inline(kb.MENU_ADMIN_REPORTS),
+        )
+    elif data == kb.ACT_EMPLOYEES:
+        employees = db.get_all_employees()
+        lines = ["👥 <b>Xodimlar ro'yxati</b>\n"]
+        for e in employees:
+            rest = config.DAY_NAMES_UZ_CAP[e["rest_day"]]
+            lines.append(f"• <b>{e['full_name']}</b> — {e['group_name']}, dam: {rest}")
+        await callback.answer()
+        await callback.message.answer(
+            "\n".join(lines),
+            parse_mode="HTML",
+            reply_markup=kb.admin_result_inline(kb.MENU_ADMIN_INFO),
+        )
+    elif data == kb.ACT_GROUPS:
+        groups = db.get_all_groups()
+        lines = ["🗂️ <b>Navbatchilik guruhlari</b>\n"]
+        for g in groups:
+            days = ", ".join(config.DAY_NAMES_UZ_CAP[d] for d in g["duty_days_list"])
+            emps = db.get_employees_by_group(g["id"])
+            names = ", ".join(e["full_name"] for e in emps)
+            lines.append(f"\n<b>{g['name']}</b>\n📅 {days}\n👤 {names}")
+        await callback.answer()
+        await callback.message.answer(
+            "\n".join(lines),
+            parse_mode="HTML",
+            reply_markup=kb.admin_result_inline(kb.MENU_ADMIN_INFO),
+        )
+
+
+# ─── Admin buyruqlari (slash — qolgan) ───────────────────────────────────────
 
 @router.message(Command("today"))
-@router.message(F.text == kb.BTN_TODAY)
 async def cmd_today(message: Message) -> None:
     if not is_admin(message.from_user.id):
         return
-    text = build_morning_message()
-    await message.answer(text, parse_mode="HTML", reply_markup=kb.admin_menu_keyboard())
-
-
-@router.message(F.text == kb.BTN_SEND_GROUP)
-async def btn_send_duty_to_group(message: Message, bot: Bot) -> None:
-    """Admin istalgan vaqtda navbatchilar ro'yxatini guruhga yuboradi."""
-    if not is_admin(message.from_user.id):
-        return
-    ok = await send_duty_list_to_group(bot, manual=True)
-    if ok:
-        await message.answer(
-            "✅ <b>Navbatchilar ro'yxati guruhga yuborildi!</b>",
-            parse_mode="HTML",
-            reply_markup=kb.admin_menu_keyboard(),
-        )
-    else:
-        await message.answer(
-            "❌ Guruh ulanmagan.\n\n"
-            "Botni guruhga qo'shing va guruhda /setgroup yuboring.",
-            parse_mode="HTML",
-            reply_markup=kb.admin_menu_keyboard(),
-        )
+    await message.answer(
+        build_morning_message(),
+        parse_mode="HTML",
+        reply_markup=kb.admin_result_inline(kb.MENU_ADMIN_DUTY),
+    )
 
 
 @router.message(Command("report_today"))
-@router.message(F.text == kb.BTN_REPORT)
 async def cmd_report_today(message: Message) -> None:
     if not is_admin(message.from_user.id):
         return
-    text = build_evening_message()
-    await message.answer(text, parse_mode="HTML", reply_markup=kb.admin_menu_keyboard())
+    await message.answer(
+        build_evening_message(),
+        parse_mode="HTML",
+        reply_markup=kb.admin_result_inline(kb.MENU_ADMIN_REPORTS),
+    )
 
 
 @router.message(Command("rating"))
-@router.message(F.text == kb.BTN_RATING)
 async def cmd_rating(message: Message) -> None:
     if not is_admin(message.from_user.id):
         return
@@ -373,14 +625,15 @@ async def cmd_rating(message: Message) -> None:
     lines = [f"🏆 <b>Oylik reyting — {now.strftime('%B %Y')}</b>\n"]
     for i, r in enumerate(ratings, 1):
         medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
-        lines.append(
-            f"{medal} <b>{r['full_name']}</b> ({r['group_name']}) — {r['total_score']} ball"
-        )
-    await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=kb.admin_menu_keyboard())
+        lines.append(f"{medal} <b>{r['full_name']}</b> ({r['group_name']}) — {r['total_score']} ball")
+    await message.answer(
+        "\n".join(lines),
+        parse_mode="HTML",
+        reply_markup=kb.admin_result_inline(kb.MENU_ADMIN_REPORTS),
+    )
 
 
 @router.message(Command("employees"))
-@router.message(F.text == kb.BTN_EMPLOYEES)
 async def cmd_employees(message: Message) -> None:
     if not is_admin(message.from_user.id):
         return
@@ -388,25 +641,30 @@ async def cmd_employees(message: Message) -> None:
     lines = ["👥 <b>Xodimlar ro'yxati</b>\n"]
     for e in employees:
         rest = config.DAY_NAMES_UZ_CAP[e["rest_day"]]
-        lines.append(
-            f"• <b>{e['full_name']}</b> — {e['group_name']}, dam: {rest}"
-        )
-    await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=kb.admin_menu_keyboard())
+        lines.append(f"• <b>{e['full_name']}</b> — {e['group_name']}, dam: {rest}")
+    await message.answer(
+        "\n".join(lines),
+        parse_mode="HTML",
+        reply_markup=kb.admin_result_inline(kb.MENU_ADMIN_INFO),
+    )
 
 
 @router.message(Command("groups"))
-@router.message(F.text == kb.BTN_GROUPS)
 async def cmd_groups(message: Message) -> None:
     if not is_admin(message.from_user.id):
         return
     groups = db.get_all_groups()
-    lines = ["👥 <b>Navbatchilik guruhlari</b>\n"]
+    lines = ["🗂️ <b>Navbatchilik guruhlari</b>\n"]
     for g in groups:
         days = ", ".join(config.DAY_NAMES_UZ_CAP[d] for d in g["duty_days_list"])
         emps = db.get_employees_by_group(g["id"])
         names = ", ".join(e["full_name"] for e in emps)
-        lines.append(f"\n<b>{g['name']}</b>\n📅 Kunlar: {days}\n👤 {names}")
-    await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=kb.admin_menu_keyboard())
+        lines.append(f"\n<b>{g['name']}</b>\n📅 {days}\n👤 {names}")
+    await message.answer(
+        "\n".join(lines),
+        parse_mode="HTML",
+        reply_markup=kb.admin_result_inline(kb.MENU_ADMIN_INFO),
+    )
 
 
 @router.message(Command("setgroup"))
@@ -444,50 +702,14 @@ async def bot_added_to_group(event: ChatMemberUpdated, bot: Bot) -> None:
 
 # ─── Ishni boshlash ──────────────────────────────────────────────────────────
 
-@router.message(F.text == "▶️ Ishni boshlash")
+@router.message(F.text.in_({kb.BTN_WORK_START, "▶️ Ishni boshlash"}))
 async def start_work(message: Message, state: FSMContext) -> None:
-    employee = db.get_employee_by_telegram_id(message.from_user.id)
-    if not employee:
-        await message.answer("❌ Avval o'zingizni tanlang (/start).")
-        return
-
-    if not is_employee_on_duty(employee):
-        await message.answer("ℹ️ Bugun sizning navbatchilik kuningiz emas.")
-        return
-
-    today = today_str()
-    existing = db.get_report(employee["id"], today)
-    if existing:
-        if existing["status"] in ("submitted", "accepted"):
-            await message.answer("✅ Siz bugun allaqachon hisobot yuborgansiz.")
-            return
-        if existing["status"] == "started":
-            await message.answer(
-                "🔄 Ish allaqachon boshlangan. Rasmlarni yuboring.",
-                reply_markup=kb.main_menu_keyboard(True, True),
-            )
-            return
-
-    group, _ = db.get_today_duty_employees()
-    if not group:
-        await message.answer("❌ Bugun navbatchilik guruh topilmadi.")
-        return
-    report = db.create_report(employee["id"], group["id"], today)
-    await state.set_state(ReportStates.waiting_before)
-    await state.update_data(report_id=report["id"])
-
-    await message.answer(
-        f"▶️ Ish boshlandi! ⏰ {format_time(report['start_time'])}\n\n"
-        "📸 Avval <b>OLDIN</b> rasmlarni yuboring.\n"
-        "Tugmani bosing va rasmlarni yuboring:",
-        parse_mode="HTML",
-        reply_markup=kb.main_menu_keyboard(True, True),
-    )
+    await _do_start_work(message, state)
 
 
 # ─── Foto-hisobot jarayoni ───────────────────────────────────────────────────
 
-@router.message(F.text == "📸 OLDIN rasm yuborish")
+@router.message(F.text.in_({kb.BTN_WORK_BEFORE, "📸 OLDIN rasm yuborish"}))
 async def btn_before_photos(message: Message, state: FSMContext) -> None:
     employee = db.get_employee_by_telegram_id(message.from_user.id)
     if not employee:
@@ -522,7 +744,7 @@ async def receive_before_photo(message: Message, state: FSMContext) -> None:
     )
 
 
-@router.message(F.text == "✅ Tozalash tugadi / KEYIN rasmlar")
+@router.message(F.text.in_({kb.BTN_WORK_AFTER, "✅ Tozalash tugadi / KEYIN rasmlar"}))
 async def btn_after_photos(message: Message, state: FSMContext) -> None:
     employee = db.get_employee_by_telegram_id(message.from_user.id)
     if not employee:
@@ -563,7 +785,7 @@ async def receive_after_photo(message: Message, state: FSMContext) -> None:
     )
 
 
-@router.message(F.text == "📤 Hisobotni yuborish")
+@router.message(F.text.in_({kb.BTN_WORK_SUBMIT, "📤 Hisobotni yuborish"}))
 async def submit_report(message: Message, state: FSMContext, bot: Bot) -> None:
     employee = db.get_employee_by_telegram_id(message.from_user.id)
     if not employee:
@@ -593,7 +815,7 @@ async def submit_report(message: Message, state: FSMContext, bot: Bot) -> None:
         f"📷 KEYIN: {updated['after_count']} ta\n"
         f"⭐ Ball: {score}\n\n"
         "⏳ Rahbar tasdiqlashini kuting...",
-        reply_markup=kb.main_menu_keyboard(False, False),
+        reply_markup=kb.reply_base_keyboard(),
     )
 
     # Adminlarga yuborish
