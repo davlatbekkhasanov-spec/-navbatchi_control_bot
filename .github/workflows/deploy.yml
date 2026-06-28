@@ -1,0 +1,23 @@
+name: Deploy Navbatchi
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Railway CLI
+        run: npm i -g @railway/cli
+
+      - name: Set variables and deploy
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          railway variables --set "BOT_TOKEN=${{ secrets.BOT_TOKEN }}" --service "-navbatchi_control_bot"
+          railway variables --set "ADMIN_IDS=1432810519" --service "-navbatchi_control_bot"
+          railway redeploy --yes --from-source --service "-navbatchi_control_bot"
