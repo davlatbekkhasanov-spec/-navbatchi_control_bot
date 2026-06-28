@@ -203,12 +203,8 @@ async def _edit_or_send_menu(callback: CallbackQuery, text: str, markup) -> None
 
 async def open_admin_home(message: Message) -> None:
     await message.answer(
-        kb.ADMIN_MAIN_TEXT + "\n\n👇 <b>Tugmalarni bosing</b> (pastda yoki xabar ostida):",
+        kb.ADMIN_MAIN_TEXT + f"\n\n🔖 Versiya: <b>{config.BOT_VERSION}</b>",
         parse_mode="HTML",
-        reply_markup=kb.admin_main_inline(),
-    )
-    await message.answer(
-        "⌨️ Menyu tayyor",
         reply_markup=kb.admin_reply_keyboard(),
     )
 
@@ -407,9 +403,8 @@ async def reply_admin_duty(message: Message) -> None:
     await message.answer(
         kb.ADMIN_DUTY_TEXT,
         parse_mode="HTML",
-        reply_markup=kb.admin_duty_inline(),
+        reply_markup=kb.admin_duty_reply_keyboard(),
     )
-    await message.answer("👇", reply_markup=kb.admin_duty_reply_keyboard())
 
 
 @router.message(F.text == kb.BTN_ADMIN_REPORTS)
@@ -419,7 +414,7 @@ async def reply_admin_reports(message: Message) -> None:
     await message.answer(
         kb.ADMIN_REPORTS_TEXT,
         parse_mode="HTML",
-        reply_markup=kb.admin_reports_inline(),
+        reply_markup=kb.admin_reports_reply_keyboard(),
     )
 
 
@@ -430,7 +425,7 @@ async def reply_admin_info(message: Message) -> None:
     await message.answer(
         kb.ADMIN_INFO_TEXT,
         parse_mode="HTML",
-        reply_markup=kb.admin_info_inline(),
+        reply_markup=kb.admin_info_reply_keyboard(),
     )
 
 
@@ -441,7 +436,7 @@ async def reply_admin_help(message: Message) -> None:
     await message.answer(
         _help_text(True),
         parse_mode="HTML",
-        reply_markup=kb.admin_result_inline(kb.MENU_ADMIN_MAIN),
+        reply_markup=kb.admin_reply_keyboard(),
     )
 
 
@@ -452,7 +447,7 @@ async def reply_today_view(message: Message) -> None:
     await message.answer(
         build_morning_message(),
         parse_mode="HTML",
-        reply_markup=kb.admin_result_inline(kb.MENU_ADMIN_DUTY),
+        reply_markup=kb.admin_duty_reply_keyboard(),
     )
 
 
@@ -471,6 +466,68 @@ async def reply_today_send(message: Message, bot: Bot) -> None:
             "❌ Guruh ulanmagan. Guruhda /setgroup yuboring.",
             reply_markup=kb.admin_duty_reply_keyboard(),
         )
+
+
+@router.message(F.text == kb.BTN_REPORT_TODAY)
+async def reply_report_today(message: Message) -> None:
+    if not is_admin(message.from_user.id):
+        return
+    await message.answer(
+        build_evening_message(),
+        parse_mode="HTML",
+        reply_markup=kb.admin_reports_reply_keyboard(),
+    )
+
+
+@router.message(F.text == kb.BTN_RATING)
+async def reply_rating(message: Message) -> None:
+    if not is_admin(message.from_user.id):
+        return
+    now = now_tashkent()
+    ratings = db.get_monthly_rating(now.year, now.month)
+    lines = [f"🏆 <b>Oylik reyting — {now.strftime('%B %Y')}</b>\n"]
+    for i, r in enumerate(ratings, 1):
+        medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
+        lines.append(f"{medal} <b>{r['full_name']}</b> ({r['group_name']}) — {r['total_score']} ball")
+    await message.answer(
+        "\n".join(lines),
+        parse_mode="HTML",
+        reply_markup=kb.admin_reports_reply_keyboard(),
+    )
+
+
+@router.message(F.text == kb.BTN_EMPLOYEES)
+async def reply_employees(message: Message) -> None:
+    if not is_admin(message.from_user.id):
+        return
+    employees = db.get_all_employees()
+    lines = ["👥 <b>Xodimlar ro'yxati</b>\n"]
+    for e in employees:
+        rest = config.DAY_NAMES_UZ_CAP[e["rest_day"]]
+        lines.append(f"• <b>{e['full_name']}</b> — {e['group_name']}, dam: {rest}")
+    await message.answer(
+        "\n".join(lines),
+        parse_mode="HTML",
+        reply_markup=kb.admin_info_reply_keyboard(),
+    )
+
+
+@router.message(F.text == kb.BTN_GROUPS)
+async def reply_groups(message: Message) -> None:
+    if not is_admin(message.from_user.id):
+        return
+    groups = db.get_all_groups()
+    lines = ["🗂️ <b>Navbatchilik guruhlari</b>\n"]
+    for g in groups:
+        days = ", ".join(config.DAY_NAMES_UZ_CAP[d] for d in g["duty_days_list"])
+        emps = db.get_employees_by_group(g["id"])
+        names = ", ".join(e["full_name"] for e in emps)
+        lines.append(f"\n<b>{g['name']}</b>\n📅 {days}\n👤 {names}")
+    await message.answer(
+        "\n".join(lines),
+        parse_mode="HTML",
+        reply_markup=kb.admin_info_reply_keyboard(),
+    )
 
 
 def _help_text(is_admin_user: bool) -> str:
@@ -501,8 +558,8 @@ def _help_text(is_admin_user: bool) -> str:
 async def cmd_help(message: Message) -> None:
     admin_user = is_admin(message.from_user.id)
     text = _help_text(admin_user)
-    back = kb.admin_result_inline(kb.MENU_ADMIN_MAIN) if admin_user else kb.admin_result_inline(kb.MENU_EMP_MAIN)
-    await message.answer(text, parse_mode="HTML", reply_markup=back)
+    markup = kb.admin_reply_keyboard() if admin_user else kb.admin_result_inline(kb.MENU_EMP_MAIN)
+    await message.answer(text, parse_mode="HTML", reply_markup=markup)
 
 
 # ─── Ichki menyu navigatsiya ─────────────────────────────────────────────────
@@ -516,13 +573,33 @@ async def menu_navigate(callback: CallbackQuery) -> None:
 
     data = callback.data
     if data == kb.MENU_ADMIN_MAIN:
-        await _edit_or_send_menu(callback, kb.ADMIN_MAIN_TEXT, kb.admin_main_inline())
+        await callback.answer()
+        await callback.message.answer(
+            kb.ADMIN_MAIN_TEXT,
+            parse_mode="HTML",
+            reply_markup=kb.admin_reply_keyboard(),
+        )
     elif data == kb.MENU_ADMIN_DUTY:
-        await _edit_or_send_menu(callback, kb.ADMIN_DUTY_TEXT, kb.admin_duty_inline())
+        await callback.answer()
+        await callback.message.answer(
+            kb.ADMIN_DUTY_TEXT,
+            parse_mode="HTML",
+            reply_markup=kb.admin_duty_reply_keyboard(),
+        )
     elif data == kb.MENU_ADMIN_REPORTS:
-        await _edit_or_send_menu(callback, kb.ADMIN_REPORTS_TEXT, kb.admin_reports_inline())
+        await callback.answer()
+        await callback.message.answer(
+            kb.ADMIN_REPORTS_TEXT,
+            parse_mode="HTML",
+            reply_markup=kb.admin_reports_reply_keyboard(),
+        )
     elif data == kb.MENU_ADMIN_INFO:
-        await _edit_or_send_menu(callback, kb.ADMIN_INFO_TEXT, kb.admin_info_inline())
+        await callback.answer()
+        await callback.message.answer(
+            kb.ADMIN_INFO_TEXT,
+            parse_mode="HTML",
+            reply_markup=kb.admin_info_reply_keyboard(),
+        )
     elif data == kb.MENU_EMP_MAIN:
         st = get_employee_state(callback.from_user.id)
         text = kb.EMP_MAIN_TEXT
@@ -541,6 +618,8 @@ async def menu_navigate(callback: CallbackQuery) -> None:
         )
     elif data == kb.MENU_EMP_WORK:
         await _edit_or_send_menu(callback, kb.EMP_WORK_TEXT, kb.employee_work_inline())
+    else:
+        return
     await callback.answer()
 
 
@@ -568,11 +647,9 @@ async def menu_action(callback: CallbackQuery, state: FSMContext, bot: Bot) -> N
 
     if data == kb.ACT_HELP:
         admin_user = is_admin(user_id)
-        back = kb.admin_result_inline(
-            kb.MENU_ADMIN_MAIN if admin_user else kb.MENU_EMP_MAIN
-        )
         await callback.answer()
-        await callback.message.answer(_help_text(admin_user), parse_mode="HTML", reply_markup=back)
+        markup = kb.admin_reply_keyboard() if admin_user else kb.admin_result_inline(kb.MENU_EMP_MAIN)
+        await callback.message.answer(_help_text(admin_user), parse_mode="HTML", reply_markup=markup)
         return
 
     if data == kb.ACT_STATUS:
@@ -605,7 +682,7 @@ async def menu_action(callback: CallbackQuery, state: FSMContext, bot: Bot) -> N
         await callback.message.answer(
             build_morning_message(),
             parse_mode="HTML",
-            reply_markup=kb.admin_result_inline(kb.MENU_ADMIN_DUTY),
+            reply_markup=kb.admin_duty_reply_keyboard(),
         )
     elif data == kb.ACT_TODAY_SEND:
         ok = await send_duty_list_to_group(bot, manual=True)
@@ -613,19 +690,19 @@ async def menu_action(callback: CallbackQuery, state: FSMContext, bot: Bot) -> N
         if ok:
             await callback.message.answer(
                 "✅ Navbatchilar ro'yxati guruhga yuborildi!",
-                reply_markup=kb.admin_result_inline(kb.MENU_ADMIN_DUTY),
+                reply_markup=kb.admin_duty_reply_keyboard(),
             )
         else:
             await callback.message.answer(
                 "❌ Guruh ulanmagan. Guruhda /setgroup yuboring.",
-                reply_markup=kb.admin_result_inline(kb.MENU_ADMIN_DUTY),
+                reply_markup=kb.admin_duty_reply_keyboard(),
             )
     elif data == kb.ACT_REPORT:
         await callback.answer()
         await callback.message.answer(
             build_evening_message(),
             parse_mode="HTML",
-            reply_markup=kb.admin_result_inline(kb.MENU_ADMIN_REPORTS),
+            reply_markup=kb.admin_reports_reply_keyboard(),
         )
     elif data == kb.ACT_RATING:
         now = now_tashkent()
@@ -638,7 +715,7 @@ async def menu_action(callback: CallbackQuery, state: FSMContext, bot: Bot) -> N
         await callback.message.answer(
             "\n".join(lines),
             parse_mode="HTML",
-            reply_markup=kb.admin_result_inline(kb.MENU_ADMIN_REPORTS),
+            reply_markup=kb.admin_reports_reply_keyboard(),
         )
     elif data == kb.ACT_EMPLOYEES:
         employees = db.get_all_employees()
@@ -650,7 +727,7 @@ async def menu_action(callback: CallbackQuery, state: FSMContext, bot: Bot) -> N
         await callback.message.answer(
             "\n".join(lines),
             parse_mode="HTML",
-            reply_markup=kb.admin_result_inline(kb.MENU_ADMIN_INFO),
+            reply_markup=kb.admin_info_reply_keyboard(),
         )
     elif data == kb.ACT_GROUPS:
         groups = db.get_all_groups()
@@ -664,7 +741,7 @@ async def menu_action(callback: CallbackQuery, state: FSMContext, bot: Bot) -> N
         await callback.message.answer(
             "\n".join(lines),
             parse_mode="HTML",
-            reply_markup=kb.admin_result_inline(kb.MENU_ADMIN_INFO),
+            reply_markup=kb.admin_info_reply_keyboard(),
         )
 
 
@@ -677,7 +754,7 @@ async def cmd_today(message: Message) -> None:
     await message.answer(
         build_morning_message(),
         parse_mode="HTML",
-        reply_markup=kb.admin_result_inline(kb.MENU_ADMIN_DUTY),
+        reply_markup=kb.admin_duty_reply_keyboard(),
     )
 
 
@@ -688,7 +765,7 @@ async def cmd_report_today(message: Message) -> None:
     await message.answer(
         build_evening_message(),
         parse_mode="HTML",
-        reply_markup=kb.admin_result_inline(kb.MENU_ADMIN_REPORTS),
+        reply_markup=kb.admin_reports_reply_keyboard(),
     )
 
 
@@ -705,7 +782,7 @@ async def cmd_rating(message: Message) -> None:
     await message.answer(
         "\n".join(lines),
         parse_mode="HTML",
-        reply_markup=kb.admin_result_inline(kb.MENU_ADMIN_REPORTS),
+        reply_markup=kb.admin_reports_reply_keyboard(),
     )
 
 
@@ -721,7 +798,7 @@ async def cmd_employees(message: Message) -> None:
     await message.answer(
         "\n".join(lines),
         parse_mode="HTML",
-        reply_markup=kb.admin_result_inline(kb.MENU_ADMIN_INFO),
+        reply_markup=kb.admin_info_reply_keyboard(),
     )
 
 
@@ -739,7 +816,7 @@ async def cmd_groups(message: Message) -> None:
     await message.answer(
         "\n".join(lines),
         parse_mode="HTML",
-        reply_markup=kb.admin_result_inline(kb.MENU_ADMIN_INFO),
+        reply_markup=kb.admin_info_reply_keyboard(),
     )
 
 

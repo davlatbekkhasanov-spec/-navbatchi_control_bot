@@ -19,6 +19,10 @@ BTN_ADMIN_INFO = "👥 Ma'lumotnoma"
 BTN_ADMIN_HELP = "ℹ️ Yordam"
 BTN_TODAY_VIEW = "📋 Bugungi navbatchilar"
 BTN_TODAY_SEND = "📤 Guruhga yuborish"
+BTN_REPORT_TODAY = "📊 Bugungi hisobot"
+BTN_RATING = "🏆 Oylik reyting"
+BTN_EMPLOYEES = "👥 Xodimlar ro'yxati"
+BTN_GROUPS = "🗂️ Navbatchi guruhlari"
 
 # Eski reply tugmalar (ish jarayoni uchun)
 BTN_WORK_START = "▶️ Ishni boshlash"
@@ -69,6 +73,28 @@ def admin_duty_reply_keyboard() -> ReplyKeyboardMarkup:
     builder.row(
         KeyboardButton(text=BTN_TODAY_VIEW),
         KeyboardButton(text=BTN_TODAY_SEND),
+    )
+    builder.row(KeyboardButton(text=BTN_HOME))
+    return builder.as_markup(resize_keyboard=True, is_persistent=True)
+
+
+def admin_reports_reply_keyboard() -> ReplyKeyboardMarkup:
+    """Hisobotlar bo'limi tugmalari."""
+    builder = ReplyKeyboardBuilder()
+    builder.row(
+        KeyboardButton(text=BTN_REPORT_TODAY),
+        KeyboardButton(text=BTN_RATING),
+    )
+    builder.row(KeyboardButton(text=BTN_HOME))
+    return builder.as_markup(resize_keyboard=True, is_persistent=True)
+
+
+def admin_info_reply_keyboard() -> ReplyKeyboardMarkup:
+    """Ma'lumotnoma bo'limi tugmalari."""
+    builder = ReplyKeyboardBuilder()
+    builder.row(
+        KeyboardButton(text=BTN_EMPLOYEES),
+        KeyboardButton(text=BTN_GROUPS),
     )
     builder.row(KeyboardButton(text=BTN_HOME))
     return builder.as_markup(resize_keyboard=True, is_persistent=True)
@@ -239,7 +265,7 @@ def cancel_comment_keyboard() -> InlineKeyboardMarkup:
 ADMIN_MAIN_TEXT = (
     "🧹 <b>Navbatchi — Admin panel</b>\n\n"
     "⏰ Har kuni <b>07:30</b> da navbatchilar ro'yxati guruhga avtomatik ketadi.\n\n"
-    "👇 Bo'limni tanlang:"
+    "👇 Pastdagi tugmalardan bo'limni tanlang:"
 )
 
 ADMIN_DUTY_TEXT = "📋 <b>Navbatchilik bo'limi</b>\n\nKerakli amalni tanlang:"
