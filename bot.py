@@ -203,11 +203,14 @@ async def _edit_or_send_menu(callback: CallbackQuery, text: str, markup) -> None
 
 async def open_admin_home(message: Message) -> None:
     await message.answer(
-        kb.ADMIN_MAIN_TEXT,
+        kb.ADMIN_MAIN_TEXT + "\n\n👇 <b>Tugmalarni bosing</b> (pastda yoki xabar ostida):",
         parse_mode="HTML",
-        reply_markup=kb.reply_base_keyboard(),
+        reply_markup=kb.admin_main_inline(),
     )
-    await _send_menu(message, "👇 <b>Admin menyu:</b>", kb.admin_main_inline())
+    await message.answer(
+        "⌨️ Menyu tayyor",
+        reply_markup=kb.admin_reply_keyboard(),
+    )
 
 
 async def open_employee_home(message: Message, state: dict) -> None:
@@ -395,6 +398,79 @@ async def btn_home_menu(message: Message, state: FSMContext) -> None:
         await message.answer("❌ Avval /start bilan ro'yxatdan o'ting.")
         return
     await open_employee_home(message, emp_state)
+
+
+@router.message(F.text == kb.BTN_ADMIN_DUTY)
+async def reply_admin_duty(message: Message) -> None:
+    if not is_admin(message.from_user.id):
+        return
+    await message.answer(
+        kb.ADMIN_DUTY_TEXT,
+        parse_mode="HTML",
+        reply_markup=kb.admin_duty_inline(),
+    )
+    await message.answer("👇", reply_markup=kb.admin_duty_reply_keyboard())
+
+
+@router.message(F.text == kb.BTN_ADMIN_REPORTS)
+async def reply_admin_reports(message: Message) -> None:
+    if not is_admin(message.from_user.id):
+        return
+    await message.answer(
+        kb.ADMIN_REPORTS_TEXT,
+        parse_mode="HTML",
+        reply_markup=kb.admin_reports_inline(),
+    )
+
+
+@router.message(F.text == kb.BTN_ADMIN_INFO)
+async def reply_admin_info(message: Message) -> None:
+    if not is_admin(message.from_user.id):
+        return
+    await message.answer(
+        kb.ADMIN_INFO_TEXT,
+        parse_mode="HTML",
+        reply_markup=kb.admin_info_inline(),
+    )
+
+
+@router.message(F.text == kb.BTN_ADMIN_HELP)
+async def reply_admin_help(message: Message) -> None:
+    if not is_admin(message.from_user.id):
+        return
+    await message.answer(
+        _help_text(True),
+        parse_mode="HTML",
+        reply_markup=kb.admin_result_inline(kb.MENU_ADMIN_MAIN),
+    )
+
+
+@router.message(F.text == kb.BTN_TODAY_VIEW)
+async def reply_today_view(message: Message) -> None:
+    if not is_admin(message.from_user.id):
+        return
+    await message.answer(
+        build_morning_message(),
+        parse_mode="HTML",
+        reply_markup=kb.admin_result_inline(kb.MENU_ADMIN_DUTY),
+    )
+
+
+@router.message(F.text == kb.BTN_TODAY_SEND)
+async def reply_today_send(message: Message, bot: Bot) -> None:
+    if not is_admin(message.from_user.id):
+        return
+    ok = await send_duty_list_to_group(bot, manual=True)
+    if ok:
+        await message.answer(
+            "✅ Navbatchilar ro'yxati guruhga yuborildi!",
+            reply_markup=kb.admin_duty_reply_keyboard(),
+        )
+    else:
+        await message.answer(
+            "❌ Guruh ulanmagan. Guruhda /setgroup yuboring.",
+            reply_markup=kb.admin_duty_reply_keyboard(),
+        )
 
 
 def _help_text(is_admin_user: bool) -> str:

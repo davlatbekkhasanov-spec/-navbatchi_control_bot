@@ -12,6 +12,14 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 # ─── Doimiy reply tugma ──────────────────────────────────────────────────────
 BTN_HOME = "🏠 Bosh menyu"
 
+# Admin reply bo'limlari (pastda doim ko'rinadi)
+BTN_ADMIN_DUTY = "📋 Navbatchilik"
+BTN_ADMIN_REPORTS = "📊 Hisobotlar"
+BTN_ADMIN_INFO = "👥 Ma'lumotnoma"
+BTN_ADMIN_HELP = "ℹ️ Yordam"
+BTN_TODAY_VIEW = "📋 Bugungi navbatchilar"
+BTN_TODAY_SEND = "📤 Guruhga yuborish"
+
 # Eski reply tugmalar (ish jarayoni uchun)
 BTN_WORK_START = "▶️ Ishni boshlash"
 BTN_WORK_BEFORE = "📸 OLDIN rasm yuborish"
@@ -38,6 +46,32 @@ ACT_GROUPS = "a:groups"
 ACT_HELP = "a:help"
 ACT_STATUS = "a:status"
 ACT_WORK_START = "a:work:start"
+
+
+def admin_reply_keyboard() -> ReplyKeyboardMarkup:
+    """Admin — pastda doim ko'rinadigan tugmalar."""
+    builder = ReplyKeyboardBuilder()
+    builder.row(
+        KeyboardButton(text=BTN_ADMIN_DUTY),
+        KeyboardButton(text=BTN_ADMIN_REPORTS),
+    )
+    builder.row(
+        KeyboardButton(text=BTN_ADMIN_INFO),
+        KeyboardButton(text=BTN_ADMIN_HELP),
+    )
+    builder.row(KeyboardButton(text=BTN_HOME))
+    return builder.as_markup(resize_keyboard=True, is_persistent=True)
+
+
+def admin_duty_reply_keyboard() -> ReplyKeyboardMarkup:
+    """Navbatchilik bo'limi tugmalari."""
+    builder = ReplyKeyboardBuilder()
+    builder.row(
+        KeyboardButton(text=BTN_TODAY_VIEW),
+        KeyboardButton(text=BTN_TODAY_SEND),
+    )
+    builder.row(KeyboardButton(text=BTN_HOME))
+    return builder.as_markup(resize_keyboard=True, is_persistent=True)
 
 
 def reply_base_keyboard(*extra_rows: list[str]) -> ReplyKeyboardMarkup:
