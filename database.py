@@ -370,6 +370,9 @@ def prepare_report_for_redo(report_id: int) -> dict | None:
         )
         row = conn.execute("SELECT * FROM reports WHERE id = ?", (report_id,)).fetchone()
         return dict(row) if row else None
+
+
+def add_photo(report_id: int, file_id: str, photo_type: str) -> None:
     """Hisobotga rasm qo'shish."""
     now = datetime.now().isoformat()
     with get_connection() as conn:

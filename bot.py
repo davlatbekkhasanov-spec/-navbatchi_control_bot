@@ -990,14 +990,28 @@ async def btn_before_photos(message: Message, state: FSMContext) -> None:
 
 @router.message(ReportStates.waiting_before, F.photo)
 async def receive_before_photo(message: Message, state: FSMContext) -> None:
+    if is_admin(message.from_user.id):
+        db.ensure_admin_demo_employee(message.from_user.id)
     data = await state.get_data()
     report_id = data.get("report_id")
     if not report_id:
+        employee = db.get_employee_by_telegram_id(message.from_user.id)
+        if employee:
+            report = db.get_report(employee["id"], today_str())
+            if report and report["status"] == "started":
+                report_id = report["id"]
+                await state.update_data(report_id=report_id)
+    if not report_id:
+        await message.answer("❌ Avval ▶️ Ishni boshlash tugmasini bosing.")
         return
     file_id = message.photo[-1].file_id
     db.add_photo(report_id, file_id, "before")
     employee = db.get_employee_by_telegram_id(message.from_user.id)
+    if not employee:
+        return
     report = db.get_report(employee["id"], today_str())
+    if not report:
+        return
     await message.answer(
         f"✅ OLDIN rasm qabul qilindi! (jami: {report['before_count']})\n"
         "Yana rasm yuborishingiz yoki ✅ Tozalash tugadi tugmasini bosishingiz mumkin."
@@ -1033,6 +1047,8 @@ async def btn_after_photos(message: Message, state: FSMContext) -> None:
 @router.message(ReportStates.collecting_after, F.photo)
 @router.message(ReportStates.waiting_after, F.photo)
 async def receive_after_photo(message: Message, state: FSMContext) -> None:
+    if is_admin(message.from_user.id):
+        db.ensure_admin_demo_employee(message.from_user.id)
     data = await state.get_data()
     report_id = data.get("report_id")
     if not report_id:
@@ -1040,11 +1056,43 @@ async def receive_after_photo(message: Message, state: FSMContext) -> None:
     file_id = message.photo[-1].file_id
     db.add_photo(report_id, file_id, "after")
     employee = db.get_employee_by_telegram_id(message.from_user.id)
+    if not employee:
+        return
     report = db.get_report(employee["id"], today_str())
+    if not report:
+        return
     await message.answer(
         f"✅ KEYIN rasm qabul qilindi! (jami: {report['after_count']})\n"
         "Yana rasm yuborishingiz yoki 📤 Hisobotni yuborish tugmasini bosishingiz mumkin."
     )
+
+
+@router.message(F.photo)
+async def receive_photo_without_state(message: Message, state: FSMContext) -> None:
+    """FSM holati yo'qolsa ham ish jarayonidagi rasmni qabul qilish."""
+    if is_admin(message.from_user.id):
+        db.ensure_admin_demo_employee(message.from_user.id)
+    employee = db.get_employee_by_telegram_id(message.from_user.id)
+    if not employee:
+        return
+    report = db.get_report(employee["id"], today_str())
+    if not report or report["status"] != "started":
+        return
+    current = await state.get_state()
+    if current in (
+        ReportStates.waiting_before.state,
+        ReportStates.collecting_after.state,
+        ReportStates.waiting_after.state,
+    ):
+        return
+    if report["before_count"] == 0:
+        await state.set_state(ReportStates.waiting_before)
+        await state.update_data(report_id=report["id"])
+        await receive_before_photo(message, state)
+    else:
+        await state.set_state(ReportStates.collecting_after)
+        await state.update_data(report_id=report["id"])
+        await receive_after_photo(message, state)
 
 
 @router.message(F.text.in_({kb.BTN_WORK_SUBMIT, "📤 Hisobotni yuborish"}))
