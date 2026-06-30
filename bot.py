@@ -1414,6 +1414,16 @@ async def main() -> None:
     logger.info("Yordamchi hub: %s", hub_status_line())
 
     bot = Bot(token=config.BOT_TOKEN)
+    me = await bot.get_me()
+    logger.info("Bot: @%s (id=%s)", me.username, me.id)
+
+    wh = await bot.get_webhook_info()
+    if wh.url:
+        logger.warning("Webhook topildi (%s) — o'chirilmoqda (faqat polling)", wh.url)
+        await bot.delete_webhook(drop_pending_updates=True)
+    else:
+        logger.info("Webhook yo'q — polling rejimi")
+
     dp = Dispatcher(storage=MemoryStorage())
     dp.message.middleware(TeamAccessMiddleware())
     dp.callback_query.middleware(TeamAccessMiddleware())
