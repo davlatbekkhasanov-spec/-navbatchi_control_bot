@@ -412,10 +412,10 @@ async def build_complaint_message() -> tuple[str, list[dict], dict | None]:
 async def send_complaint(bot: Bot, photo_ids: list[str]) -> tuple[bool, str]:
     """Shikoyatni guruhga va navbatchilarga yuborish."""
     text, employees, _group = await build_complaint_message()
-    group_chat_id = db.get_group_chat_id()
+    group_ids = db.all_group_chat_ids()
     sent_any = False
 
-    if group_chat_id:
+    for group_chat_id in group_ids:
         try:
             await bot.send_message(group_chat_id, text, parse_mode="HTML")
             sent_any = True
@@ -431,7 +431,7 @@ async def send_complaint(bot: Bot, photo_ids: list[str]) -> tuple[bool, str]:
                     )
                 await bot.send_media_group(group_chat_id, media=media)
         except Exception as e:
-            logger.error("Guruhga shikoyat yuborishda xato: %s", e)
+            logger.error("Guruhga shikoyat yuborishda xato (%s): %s", group_chat_id, e)
 
     notify_text = text + "\n\n⚠️ Iltimos, tezda bartaraf eting!"
     for emp in employees:
@@ -453,9 +453,69 @@ async def send_complaint(bot: Bot, photo_ids: list[str]) -> tuple[bool, str]:
 
     if sent_any:
         return True, "✅ Shikoyat yuborildi!"
-    if not group_chat_id and not any(e.get("telegram_user_id") for e in employees):
+    if not group_ids and not any(e.get("telegram_user_id") for e in employees):
         return False, "❌ Guruh ulanmagan va navbatchilar botda yo'q."
     return False, "❌ Shikoyat yuborilmadi. Guruh yoki xodimlarni tekshiring."
+
+
+def build_work_report_message(employee: dict, report: dict) -> str:
+    """Navbatchi kunlik ish hisoboti — guruh matni."""
+    today = now_tashkent()
+    day_name = config.DAY_NAMES_UZ_CAP[today.weekday()]
+    submit_t = format_time(report.get("submit_time") or report.get("start_time"))
+    duty_group, _ = db.get_today_duty_employees()
+    gname = duty_group["name"] if duty_group else "—"
+    return (
+        "🧹 <b>NAVBATCHI HISOBOT</b>\n\n"
+        f"👤 <b>{employee['full_name']}</b>\n"
+        f"📅 {day_name}, {today.strftime('%d.%m.%Y')}  ⏰ {submit_t}\n"
+        f"👥 Guruh: <b>{gname}</b>\n\n"
+        f"📷 OLDIN: <b>{report.get('before_count') or 0}</b> ta\n"
+        f"📷 KEYIN: <b>{report.get('after_count') or 0}</b> ta\n"
+        f"⭐ Ball: <b>{report.get('score') or 0}</b>"
+    )
+
+
+async def send_work_report_to_groups(
+    bot: Bot, employee: dict, report: dict
+) -> tuple[bool, str]:
+    """Xodim hisobotini barcha ulangan guruhlarga yuborish."""
+    group_ids = db.all_group_chat_ids()
+    if not group_ids:
+        return False, "Guruh ulanmagan (/setgroup yoki GROUP_CHAT_ID)"
+
+    text = build_work_report_message(employee, report)
+    photos = db.get_report_photos(report["id"])
+    before_ids = [p["photo_file_id"] for p in photos if p["photo_type"] == "before"]
+    after_ids = [p["photo_file_id"] for p in photos if p["photo_type"] == "after"]
+
+    sent_any = False
+    last_err = ""
+    for gid in group_ids:
+        try:
+            await bot.send_message(gid, text, parse_mode="HTML")
+            sent_any = True
+            for label, ids in (("📷 OLDIN", before_ids), ("📷 KEYIN", after_ids)):
+                if not ids:
+                    continue
+                for i in range(0, len(ids), 10):
+                    chunk = ids[i : i + 10]
+                    media = []
+                    for j, fid in enumerate(chunk):
+                        cap = f"{label} ({len(ids)} ta)" if j == 0 and i == 0 else None
+                        media.append(
+                            InputMediaPhoto(media=fid, caption=cap)
+                            if cap
+                            else InputMediaPhoto(media=fid)
+                        )
+                    await bot.send_media_group(gid, media=media)
+        except Exception as e:
+            last_err = str(e)[:120]
+            logger.error("Guruhga hisobot yuborish xatosi (%s): %s", gid, e)
+
+    if sent_any:
+        return True, ""
+    return False, last_err or "yuborib bo'lmadi"
 
 
 # ─── /start va yordam ────────────────────────────────────────────────────────
@@ -1234,6 +1294,7 @@ async def submit_report(message: Message, state: FSMContext, bot: Bot) -> None:
         ),
         day_iso=updated.get("date") or today_str(),
     )
+    group_ok, group_err = await send_work_report_to_groups(bot, employee, updated)
     await state.clear()
     admin_user = is_admin(message.from_user.id)
     home_markup = (
@@ -1245,7 +1306,8 @@ async def submit_report(message: Message, state: FSMContext, bot: Bot) -> None:
         f"✅ <b>Hisobot qabul qilindi!</b>\n\n"
         f"📷 OLDIN: {updated['before_count']} ta\n"
         f"📷 KEYIN: {updated['after_count']} ta\n"
-        f"⭐ Ball: {updated['score']}",
+        f"⭐ Ball: {updated['score']}"
+        + (f"\n\n📢 Guruhga yuborildi." if group_ok else f"\n\n⚠️ Guruhga yuborilmadi: {group_err}"),
         reply_markup=home_markup,
     )
 
@@ -1312,22 +1374,25 @@ def build_evening_message() -> str:
 
 async def send_duty_list_to_group(bot: Bot, *, manual: bool = False) -> bool:
     """Navbatchilar ro'yxatini guruhga yuborish."""
-    group_chat_id = db.get_group_chat_id()
-    if not group_chat_id:
+    group_ids = db.all_group_chat_ids()
+    if not group_ids:
         return False
     today = today_str()
     if not manual and db.was_task_run("morning", today):
         return False
-    try:
-        text = build_morning_message()
-        await bot.send_message(group_chat_id, text, parse_mode="HTML")
+    text = build_morning_message()
+    sent = False
+    for group_chat_id in group_ids:
+        try:
+            await bot.send_message(group_chat_id, text, parse_mode="HTML")
+            sent = True
+        except Exception as e:
+            logger.error("Navbatchilar yuborish xatosi (%s): %s", group_chat_id, e)
+    if sent:
         if not manual:
             db.mark_task_run("morning", today)
         logger.info("Navbatchilar ro'yxati yuborildi (manual=%s)", manual)
-        return True
-    except Exception as e:
-        logger.error("Navbatchilar yuborish xatosi: %s", e)
-        return False
+    return sent
 
 
 async def send_morning_report(bot: Bot) -> None:
@@ -1337,8 +1402,8 @@ async def send_morning_report(bot: Bot) -> None:
 
 async def send_evening_report(bot: Bot) -> None:
     """Kechqurun guruhga yakuniy hisobot."""
-    group_chat_id = db.get_group_chat_id()
-    if not group_chat_id:
+    group_ids = db.all_group_chat_ids()
+    if not group_ids:
         return
     today = today_str()
     if db.was_task_run("evening", today):
@@ -1363,13 +1428,17 @@ async def send_evening_report(bot: Bot) -> None:
                         day_iso=today,
                     )
 
-    try:
-        text = build_evening_message()
-        await bot.send_message(group_chat_id, text, parse_mode="HTML")
+    text = build_evening_message()
+    sent = False
+    for group_chat_id in group_ids:
+        try:
+            await bot.send_message(group_chat_id, text, parse_mode="HTML")
+            sent = True
+        except Exception as e:
+            logger.error("Kechki xabar xatosi (%s): %s", group_chat_id, e)
+    if sent:
         db.mark_task_run("evening", today)
         logger.info("Kechki xabar yuborildi")
-    except Exception as e:
-        logger.error("Kechki xabar xatosi: %s", e)
 
 
 # ─── Scheduler ───────────────────────────────────────────────────────────────
@@ -1410,7 +1479,7 @@ async def main() -> None:
 
     logger.info("Ma'lumotlar bazasi tayyor: %s", config.DB_PATH)
     logger.info("Admin IDs: %s", config.ADMIN_IDS or "yo'q")
-    logger.info("Guruh: %s", config.GROUP_CHAT_ID or db.get_group_chat_id() or "—")
+    logger.info("Guruhlar: %s", db.all_group_chat_ids() or "—")
     logger.info("Yordamchi hub: %s", hub_status_line())
 
     bot = Bot(token=config.BOT_TOKEN)

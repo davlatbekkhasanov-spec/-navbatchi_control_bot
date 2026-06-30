@@ -468,3 +468,15 @@ def get_group_chat_id() -> int | None:
         return int(val) if val else None
     except (TypeError, ValueError):
         return None
+
+
+def all_group_chat_ids() -> list[int]:
+    """Barcha guruhlar — asosiy + EXTRA_GROUP_IDS."""
+    out: list[int] = []
+    primary = get_group_chat_id()
+    if primary:
+        out.append(primary)
+    for gid in config.EXTRA_GROUP_IDS:
+        if gid not in out:
+            out.append(gid)
+    return out

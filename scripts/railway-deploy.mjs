@@ -105,6 +105,7 @@ async function main() {
     serviceId: nav.serviceId,
     variables: {
       GROUP_CHAT_ID: "-1001877019294",
+      EXTRA_GROUP_IDS: "-5351426801",
       DATABASE_DIR: "/data",
       ADMIN_IDS: "1432810519",
       TZ: "Asia/Tashkent",
