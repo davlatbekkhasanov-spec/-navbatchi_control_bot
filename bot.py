@@ -7,6 +7,7 @@ foto-hisobot yig'ish, rahbar tasdiqlashi va oylik reyting.
 
 import asyncio
 import logging
+import os
 import sys
 from datetime import date, datetime, timedelta, timezone
 
@@ -186,6 +187,29 @@ async def replay_today_hub_reports() -> int:
         except Exception as e:
             logger.warning("Hub replay xato report=%s: %s", report.get("id"), e)
     return pushed
+
+
+async def replay_today_work_reports_to_groups(bot: Bot) -> int:
+    """Bugungi qabul qilingan ish hisobotlarini guruh(lar)ga yuborish."""
+    today = today_str()
+    sent = 0
+    for report in db.get_today_reports(today):
+        if report.get("status") not in ("accepted", "submitted"):
+            continue
+        employee = db.get_employee_by_id(report["employee_id"])
+        if not employee:
+            continue
+        try:
+            ok, err = await send_work_report_to_groups(bot, employee, report)
+            if ok:
+                sent += 1
+                logger.info("Guruh replay OK: %s", employee.get("full_name"))
+            else:
+                logger.warning("Guruh replay FAIL %s: %s", employee.get("full_name"), err)
+            await asyncio.sleep(0.4)
+        except Exception as e:
+            logger.warning("Guruh replay xato report=%s: %s", report.get("id"), e)
+    return sent
 
 
 # ─── Yordamchi funksiyalar ───────────────────────────────────────────────────
@@ -978,6 +1002,20 @@ async def cmd_report_today(message: Message) -> None:
     )
 
 
+@router.message(Command("replay_guruh"))
+async def cmd_replay_guruh(message: Message, bot: Bot) -> None:
+    """Admin: bugungi ish hisobotlarini guruhga qayta yuborish."""
+    if not is_admin(message.from_user.id):
+        return
+    await message.answer("📤 Bugungi hisobotlar guruhga yuborilmoqda...")
+    n = await replay_today_work_reports_to_groups(bot)
+    await message.answer(
+        f"✅ Tayyor: <b>{n}</b> ta hisobot guruhga yuborildi.",
+        parse_mode="HTML",
+        reply_markup=kb.admin_duty_reply_keyboard(),
+    )
+
+
 @router.message(Command("rating"))
 async def cmd_rating(message: Message) -> None:
     if not is_admin(message.from_user.id):
@@ -1501,6 +1539,10 @@ async def main() -> None:
     replayed = await replay_today_hub_reports()
     if replayed:
         logger.info("Hub replay: %s ta hisobot yuborildi", replayed)
+
+    if os.getenv("REPLAY_GROUP_TODAY", "").strip() == "1":
+        n = await replay_today_work_reports_to_groups(bot)
+        logger.info("REPLAY_GROUP_TODAY: %s ta hisobot guruhga yuborildi", n)
 
     asyncio.create_task(scheduler_loop(bot))
 

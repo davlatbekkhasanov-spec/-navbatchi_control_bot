@@ -115,15 +115,24 @@ async function main() {
       EVENING_MINUTE: "0",
       ...(hubUrl ? { YORDAMCHI_HUB_URL: hubUrl } : {}),
       ...(hubSecret ? { YORDAMCHI_HUB_SECRET: hubSecret } : {}),
+      REPLAY_GROUP_TODAY: "1",
     },
   });
-  console.log("env:", hubSecret ? "hub OK" : "hub secret yo'q");
+  console.log("env:", hubSecret ? "hub OK" : "hub secret yo'q", "| REPLAY_GROUP_TODAY=1");
 
   const r = await gql(
     `mutation($s:String!,$e:String!){ serviceInstanceDeploy(serviceId:$s,environmentId:$e,latestCommit:true) }`,
     { s: nav.serviceId, e: nav.environmentId }
   );
   console.log("deploy navbatchi:", r.serviceInstanceDeploy ? "OK" : "?");
+
+  await upsertVariables({
+    projectId: nav.projectId,
+    environmentId: nav.environmentId,
+    serviceId: nav.serviceId,
+    variables: { REPLAY_GROUP_TODAY: "0" },
+  });
+  console.log("REPLAY_GROUP_TODAY=0 (keyingi restartlarda takrorlanmaydi)");
 }
 
 main().catch((e) => {
