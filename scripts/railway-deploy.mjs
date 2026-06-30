@@ -105,7 +105,7 @@ async function main() {
     serviceId: nav.serviceId,
     variables: {
       GROUP_CHAT_ID: "-1001877019294",
-      EXTRA_GROUP_IDS: "-5351426801",
+      EXTRA_GROUP_IDS: "",
       DATABASE_DIR: "/data",
       ADMIN_IDS: "1432810519",
       TZ: "Asia/Tashkent",
@@ -115,24 +115,15 @@ async function main() {
       EVENING_MINUTE: "0",
       ...(hubUrl ? { YORDAMCHI_HUB_URL: hubUrl } : {}),
       ...(hubSecret ? { YORDAMCHI_HUB_SECRET: hubSecret } : {}),
-      REPLAY_GROUP_TODAY: "1",
     },
   });
-  console.log("env:", hubSecret ? "hub OK" : "hub secret yo'q", "| REPLAY_GROUP_TODAY=1");
+  console.log("env:", hubSecret ? "hub OK" : "hub secret yo'q");
 
   const r = await gql(
     `mutation($s:String!,$e:String!){ serviceInstanceDeploy(serviceId:$s,environmentId:$e,latestCommit:true) }`,
     { s: nav.serviceId, e: nav.environmentId }
   );
   console.log("deploy navbatchi:", r.serviceInstanceDeploy ? "OK" : "?");
-
-  await upsertVariables({
-    projectId: nav.projectId,
-    environmentId: nav.environmentId,
-    serviceId: nav.serviceId,
-    variables: { REPLAY_GROUP_TODAY: "0" },
-  });
-  console.log("REPLAY_GROUP_TODAY=0 (keyingi restartlarda takrorlanmaydi)");
 }
 
 main().catch((e) => {

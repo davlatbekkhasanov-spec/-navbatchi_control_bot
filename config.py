@@ -28,7 +28,7 @@ def _env_str(name: str, default: str = "") -> str:
     return raw.strip() if raw and raw.strip() else default
 
 
-BOT_VERSION = "2.5.1"
+BOT_VERSION = "2.5.2"
 
 # Telegram
 BOT_TOKEN: str = _env_str("BOT_TOKEN")
@@ -38,13 +38,6 @@ ADMIN_IDS: list[int] = [
     if x.strip().isdigit()
 ]
 GROUP_CHAT_ID: int | None = _env_int("GROUP_CHAT_ID") or DEFAULT_GROUP_ID
-
-# Qo'shimcha guruhlar (vergul bilan, masalan -5351426801)
-EXTRA_GROUP_IDS: list[int] = [
-    int(x.strip())
-    for x in _env_str("EXTRA_GROUP_IDS").split(",")
-    if x.strip().lstrip("-").isdigit()
-]
 
 # SQLite (Railway: DATABASE_DIR=/data volume)
 DB_PATH = resolve_db_path("navbatchi.db")
