@@ -229,12 +229,12 @@ def admin_result_inline(back_to: str = MENU_ADMIN_MAIN) -> InlineKeyboardMarkup:
 
 def employee_main_inline(
     *,
-    on_duty: bool,
+    can_work: bool,
     has_started: bool,
     submitted: bool,
 ) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    if on_duty and not submitted:
+    if can_work:
         if not has_started:
             builder.row(
                 InlineKeyboardButton(text="▶️ Ishni boshlash", callback_data=ACT_WORK_START)

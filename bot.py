@@ -135,11 +135,18 @@ def status_text(status: str) -> str:
 
 
 def is_employee_on_duty(employee: dict) -> bool:
-    """Xodim bugun navbatchilikda bormi?"""
+    """Xodim bugun reja bo'yicha navbatchilikda bormi?"""
     group, duty_employees = db.get_today_duty_employees()
     if not group:
         return False
     return any(e["id"] == employee["id"] for e in duty_employees)
+
+
+def can_employee_work(employee: dict | None, *, submitted: bool) -> bool:
+    """Jamoa xodimi bugun ish boshlash/yuborish huquqiga ega (ixtiyoriy ham)."""
+    if not employee:
+        return False
+    return not submitted
 
 
 def calculate_submit_score(before_count: int, after_count: int) -> int:
@@ -231,6 +238,7 @@ def get_employee_state(user_id: int) -> dict:
         return {
             "employee": None,
             "on_duty": False,
+            "can_work": False,
             "has_started": False,
             "submitted": False,
             "report": None,
@@ -243,9 +251,11 @@ def get_employee_state(user_id: int) -> dict:
     submitted = bool(
         report and report["status"] in ("submitted", "accepted")
     )
+    can_work = can_employee_work(employee, submitted=submitted)
     return {
         "employee": employee,
         "on_duty": on_duty,
+        "can_work": can_work,
         "has_started": has_started,
         "submitted": submitted,
         "report": report,
@@ -334,7 +344,7 @@ async def open_employee_home(message: Message, state: dict) -> None:
     emp = state["employee"]
     if state["has_started"]:
         reply_markup = kb.work_reply_keyboard()
-    elif state["on_duty"] and not state["submitted"]:
+    elif state["can_work"]:
         reply_markup = kb.reply_base_keyboard([kb.BTN_WORK_START])
     else:
         reply_markup = kb.reply_base_keyboard()
@@ -347,13 +357,18 @@ async def open_employee_home(message: Message, state: dict) -> None:
     text = kb.EMP_MAIN_TEXT
     if state["on_duty"] and not state["submitted"]:
         text += "\n\n✅ Bugun siz <b>navbatchilikdasiz</b>."
-    elif not state["on_duty"]:
-        text += "\n\nℹ️ Bugun sizning navbatchilik kuningiz <b>emas</b>."
+    elif state["can_work"] and not state["on_duty"]:
+        text += (
+            "\n\nℹ️ Bugun reja bo'yicha navbatchilik kuningiz <b>emas</b>.\n"
+            "🙋 Lekin <b>ixtiyoriy</b> tozalash qilishingiz mumkin."
+        )
+    elif not state["can_work"]:
+        text += "\n\n✅ Bugungi hisobot allaqachon yuborilgan."
     await _send_menu(
         message,
         text,
         kb.employee_main_inline(
-            on_duty=state["on_duty"],
+            can_work=state["can_work"],
             has_started=state["has_started"],
             submitted=state["submitted"],
         ),
@@ -369,10 +384,6 @@ async def _do_start_work(message: Message, state: FSMContext) -> None:
     employee = db.get_employee_by_telegram_id(user_id)
     if not employee:
         await message.answer("❌ Avval o'zingizni tanlang (/start).")
-        return
-
-    if not is_employee_on_duty(employee) and not admin_user:
-        await message.answer("ℹ️ Bugun sizning navbatchilik kuningiz emas.")
         return
 
     today = today_str()
@@ -391,12 +402,16 @@ async def _do_start_work(message: Message, state: FSMContext) -> None:
                 await _send_menu(message, kb.EMP_WORK_TEXT, kb.employee_work_inline())
             return
 
-    group, _ = db.get_today_duty_employees()
+    scheduled = is_employee_on_duty(employee)
+    if scheduled:
+        group, _ = db.get_today_duty_employees()
+    else:
+        group = db.get_group_by_id(employee["group_id"])
     if not group:
         if admin_user:
             group = db.get_group_by_id(employee["group_id"])
         if not group:
-            await message.answer("❌ Bugun navbatchilik guruh topilmadi.")
+            await message.answer("❌ Navbatchilik guruhi topilmadi.")
             return
 
     report = db.create_report(employee["id"], group["id"], today)
@@ -404,8 +419,9 @@ async def _do_start_work(message: Message, state: FSMContext) -> None:
     await state.update_data(report_id=report["id"])
 
     markup = kb.employee_duty_reply_keyboard(has_started=True)
+    start_label = "▶️ Ish boshlandi!" if scheduled else "▶️ Ixtiyoriy ish boshlandi!"
     await message.answer(
-        f"▶️ Ish boshlandi! ⏰ {format_time(report['start_time'])}\n\n"
+        f"{start_label} ⏰ {format_time(report['start_time'])}\n\n"
         "📸 Avval <b>OLDIN</b> rasmlarni yuboring.",
         parse_mode="HTML",
         reply_markup=markup,
@@ -487,11 +503,13 @@ def build_work_report_message(employee: dict, report: dict) -> str:
     today = now_tashkent()
     day_name = config.DAY_NAMES_UZ_CAP[today.weekday()]
     submit_t = format_time(report.get("submit_time") or report.get("start_time"))
-    duty_group, _ = db.get_today_duty_employees()
-    gname = duty_group["name"] if duty_group else "—"
+    report_group = db.get_group_by_id(report.get("group_id") or employee["group_id"])
+    gname = report_group["name"] if report_group else "—"
+    voluntary = not is_employee_on_duty(employee)
+    voluntary_line = "\n🙋 <i>Ixtiyoriy navbatchilik</i>" if voluntary else ""
     return (
         "🧹 <b>NAVBATCHI HISOBOT</b>\n\n"
-        f"👤 <b>{employee['full_name']}</b>\n"
+        f"👤 <b>{employee['full_name']}</b>{voluntary_line}\n"
         f"📅 {day_name}, {today.strftime('%d.%m.%Y')}  ⏰ {submit_t}\n"
         f"👥 Guruh: <b>{gname}</b>\n\n"
         f"📷 OLDIN: <b>{report.get('before_count') or 0}</b> ta\n"
@@ -557,19 +575,20 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
         employee, group, duty_employees, report = await get_employee_context(user_id)
 
         if not employee:
-            if duty_employees:
+            roster = db.get_all_employees()
+            if roster:
                 await message.answer(
                     "👋 Salom!\n\n"
                     "🧹 <b>Navbatchi</b> botiga xush kelibsiz.\n"
                     "Iltimos, o'zingizni tanlang:",
                     parse_mode="HTML",
-                    reply_markup=kb.employee_select_keyboard(duty_employees),
+                    reply_markup=kb.employee_select_keyboard(roster),
                 )
             else:
                 await message.answer(
                     "👋 Salom!\n\n"
-                    "🧹 Bugun navbatchilik yo'q.\n"
-                    "Navbatchilik kuningizda qayta kiring.",
+                    "🧹 Xodimlar ro'yxati topilmadi.\n"
+                    "Administrator bilan bog'laning.",
                     reply_markup=kb.reply_base_keyboard(),
                 )
             return
@@ -770,6 +789,8 @@ def _help_text(is_admin_user: bool) -> str:
         "2️⃣ OLDIN rasm (majburiy)\n"
         "3️⃣ KEYIN rasm (ixtiyoriy)\n"
         "4️⃣ Hisobotni yuborish\n\n"
+        "🙋 Reja bo'yicha navbatchi bo'lmagan kunda ham jamoa xodimlari "
+        "<b>ixtiyoriy</b> tozalash qilishi mumkin.\n\n"
         "<b>Ball tizimi:</b>\n"
         f"• Vaqtida: +{config.SCORE_ON_TIME} | OLDIN: +{config.SCORE_BEFORE_PHOTO}\n"
         f"• KEYIN: +{config.SCORE_AFTER_PHOTO} | Avto qabul: +{config.SCORE_ACCEPTED}\n"
@@ -838,13 +859,18 @@ async def menu_navigate(callback: CallbackQuery) -> None:
         text = kb.EMP_MAIN_TEXT
         if st["on_duty"] and not st["submitted"]:
             text += "\n\n✅ Bugun siz <b>navbatchilikdasiz</b>."
-        elif not st["on_duty"]:
-            text += "\n\nℹ️ Bugun navbatchilik kuningiz <b>emas</b>."
+        elif st["can_work"] and not st["on_duty"]:
+            text += (
+                "\n\nℹ️ Bugun reja bo'yicha navbatchilik kuningiz <b>emas</b>.\n"
+                "🙋 Lekin <b>ixtiyoriy</b> tozalash qilishingiz mumkin."
+            )
+        elif not st["can_work"]:
+            text += "\n\n✅ Bugungi hisobot allaqachon yuborilgan."
         await _edit_or_send_menu(
             callback,
             text,
             kb.employee_main_inline(
-                on_duty=st["on_duty"],
+                can_work=st["can_work"],
                 has_started=st["has_started"],
                 submitted=st["submitted"],
             ),
