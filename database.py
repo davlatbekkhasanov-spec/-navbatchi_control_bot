@@ -185,6 +185,14 @@ def get_group_by_weekday(weekday: int) -> dict | None:
     return None
 
 
+ADMIN_DEMO_NAME = "Admin sinov"
+
+
+def _without_demo_employees(employees: list[dict]) -> list[dict]:
+    """Admin sinov profilini jamoaviy ro'yxatlardan chiqarish."""
+    return [e for e in employees if e.get("full_name") != ADMIN_DEMO_NAME]
+
+
 def get_employees_by_group(group_id: int, exclude_rest_day: int | None = None) -> list[dict]:
     """Guruh xodimlarini qaytarish (dam olish kunidagi xodimlarni chiqarib)."""
     with get_connection() as conn:
@@ -202,10 +210,7 @@ def get_employees_by_group(group_id: int, exclude_rest_day: int | None = None) -
                    ORDER BY full_name""",
                 (group_id,),
             ).fetchall()
-        return [dict(r) for r in rows]
-
-
-ADMIN_DEMO_NAME = "Admin sinov"
+        return _without_demo_employees([dict(r) for r in rows])
 
 
 def get_today_duty_employees(target_date: date | None = None) -> tuple[dict | None, list[dict]]:
@@ -217,7 +222,6 @@ def get_today_duty_employees(target_date: date | None = None) -> tuple[dict | No
     if not group:
         return None, []
     employees = get_employees_by_group(group["id"], exclude_rest_day=weekday)
-    employees = [e for e in employees if e.get("full_name") != ADMIN_DEMO_NAME]
     return group, employees
 
 
@@ -290,7 +294,7 @@ def get_all_employees() -> list[dict]:
                WHERE e.is_active = 1
                ORDER BY e.group_id, e.full_name"""
         ).fetchall()
-        return [dict(r) for r in rows]
+        return _without_demo_employees([dict(r) for r in rows])
 
 
 def get_all_groups() -> list[dict]:
@@ -436,10 +440,10 @@ def get_monthly_rating(year: int, month: int) -> list[dict]:
                LEFT JOIN reports r ON r.employee_id = e.id
                    AND strftime('%Y', r.date) = ?
                    AND strftime('%m', r.date) = ?
-               WHERE e.is_active = 1
+               WHERE e.is_active = 1 AND e.full_name != ?
                GROUP BY e.id
                ORDER BY total_score DESC, e.full_name""",
-            (str(year), f"{month:02d}"),
+            (str(year), f"{month:02d}", ADMIN_DEMO_NAME),
         ).fetchall()
         return [dict(r) for r in rows]
 
