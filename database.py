@@ -7,20 +7,20 @@ from datetime import date, datetime
 from typing import Any
 
 import config
-from employee_registry import SHORT_NAME_TO_TG
+from employee_registry import FULL_NAME_TO_TG, LEGACY_SHORT_TO_FULL, SHORT_NAME_TO_TG
 
-# Boshlang'ich xodimlar va guruhlar
+# Boshlang'ich xodimlar va guruhlar (korporativ: familiya + ism)
 SEED_EMPLOYEES = [
-    ("Sindor", 2, 2),      # chorshanba, 2-guruh
-    ("Muslim", 6, 1),      # yakshanba, 1-guruh
-    ("Ziyod", 4, 2),       # juma, 2-guruh
-    ("Abdullo", 3, 1),     # payshanba, 1-guruh
-    ("Oxun", 0, 3),        # dushanba, 3-guruh
-    ("Ozod", 1, 3),        # seshanba, 3-guruh
-    ("Tulqin", 1, 3),      # seshanba, 3-guruh
-    ("Tolib", 6, 2),       # yakshanba, 2-guruh
-    ("Farrux", 5, 1),      # shanba, 1-guruh
-    ("Admin sinov", 6, 1), # admin sinov profili
+    ("Ruziboev Sindor", 2, 2),       # chorshanba, 2-guruh
+    ("Toxirov Muslimbek", 6, 1),     # yakshanba, 1-guruh
+    ("Ravshanov Ziyodullo", 4, 2),   # juma, 2-guruh
+    ("Mustafoev Abdullo", 3, 1),     # payshanba, 1-guruh
+    ("Ravshanov Oxunjon", 0, 3),     # dushanba, 3-guruh
+    ("Ergashev Ozodbek", 1, 3),      # seshanba, 3-guruh
+    ("Samadov Tulqin", 1, 3),        # seshanba, 3-guruh
+    ("Shernazarov Tolib", 6, 2),     # yakshanba, 2-guruh
+    ("Tuvalov Farrux", 5, 1),        # shanba, 1-guruh
+    ("Admin sinov", 6, 1),           # admin sinov profili
 ]
 
 SEED_GROUPS = [
@@ -51,11 +51,38 @@ def get_connection():
         conn.close()
 
 
+def _migrate_employee_full_names(cur) -> None:
+    """Qisqa ismlarni familiya + ism formatiga o'zgartirish."""
+    for short, full in LEGACY_SHORT_TO_FULL.items():
+        short_row = cur.execute(
+            "SELECT id FROM employees WHERE lower(trim(full_name)) = ?",
+            (short,),
+        ).fetchone()
+        if not short_row:
+            continue
+        full_row = cur.execute(
+            "SELECT id FROM employees WHERE full_name = ?",
+            (full,),
+        ).fetchone()
+        if full_row and full_row["id"] != short_row["id"]:
+            sid, fid = short_row["id"], full_row["id"]
+            cur.execute(
+                "UPDATE reports SET employee_id = ? WHERE employee_id = ?",
+                (fid, sid),
+            )
+            cur.execute("DELETE FROM employees WHERE id = ?", (sid,))
+        elif not full_row:
+            cur.execute(
+                "UPDATE employees SET full_name = ? WHERE id = ?",
+                (full, short_row["id"]),
+            )
+
+
 def _sync_employee_telegram_ids(cur) -> None:
-    """Qisqa ismlarni jamoa Telegram ID bilan bog'lash."""
+    """Xodimlarni jamoa Telegram ID bilan bog'lash."""
     for row in cur.execute("SELECT id, full_name, telegram_user_id FROM employees").fetchall():
         key = (row["full_name"] or "").strip().lower()
-        tg_id = SHORT_NAME_TO_TG.get(key)
+        tg_id = FULL_NAME_TO_TG.get(key) or SHORT_NAME_TO_TG.get(key)
         if not tg_id:
             continue
         if row["telegram_user_id"] != tg_id:
@@ -141,6 +168,7 @@ def init_db() -> None:
                    VALUES (?, ?, ?)""",
                 (name, rest_day, group_id),
             )
+        _migrate_employee_full_names(cur)
         _sync_employee_telegram_ids(cur)
 
 

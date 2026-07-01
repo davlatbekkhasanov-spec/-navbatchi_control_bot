@@ -22,7 +22,7 @@ TG_EMPLOYEE: dict[int, str] = {
     TUVALOV_FARRUX_TG_ID: CANONICAL_TUVALOV,
 }
 
-# Navbatchi bazasidagi qisqa ismlar → kanonik
+# Navbatchi bazasidagi qisqa ismlar → kanonik TG (migratsiya uchun)
 SHORT_NAME_TO_TG: dict[str, int] = {
     "ozod": 7844168817,
     "oxun": 5412958249,
@@ -34,6 +34,21 @@ SHORT_NAME_TO_TG: dict[str, int] = {
     "ziyod": 8440127425,
     "farrux": TUVALOV_FARRUX_TG_ID,
 }
+
+# Eski qisqa ismlar → korporativ familiya + ism
+LEGACY_SHORT_TO_FULL: dict[str, str] = {
+    "ozod": "Ergashev Ozodbek",
+    "oxun": "Ravshanov Oxunjon",
+    "sindor": "Ruziboev Sindor",
+    "abdullo": "Mustafoev Abdullo",
+    "tulqin": "Samadov Tulqin",
+    "tolib": "Shernazarov Tolib",
+    "muslim": "Toxirov Muslimbek",
+    "ziyod": "Ravshanov Ziyodullo",
+    "farrux": CANONICAL_TUVALOV,
+}
+
+FULL_NAME_TO_TG: dict[str, int] = {name.lower(): tg for tg, name in TG_EMPLOYEE.items()}
 
 
 def builtin_team_ids() -> frozenset[int]:

@@ -1372,7 +1372,7 @@ def build_morning_message() -> str:
         rest_note = ""
         if e["rest_day"] == today.weekday():
             rest_note = " (dam olish)"
-        lines.append(f"  • {e['full_name']}{rest_note}")
+        lines.append(f"  • <b>{e['full_name']}</b>{rest_note}")
 
     lines += [
         "",
@@ -1403,9 +1403,9 @@ def build_evening_message() -> str:
             emoji = status_emoji(r["status"])
             label = status_text(r["status"])
             score = r["score"]
-            lines.append(f"  • {e['full_name']} — {emoji} {label} — {score} ball")
+            lines.append(f"  • <b>{e['full_name']}</b> — {emoji} {label} — {score} ball")
         else:
-            lines.append(f"  • {e['full_name']} — ⏳ hali yubormadi")
+            lines.append(f"  • <b>{e['full_name']}</b> — ⏳ hali yubormadi")
 
     return "\n".join(lines)
 
