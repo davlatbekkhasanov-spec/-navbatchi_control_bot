@@ -177,8 +177,11 @@ def get_employees_by_group(group_id: int, exclude_rest_day: int | None = None) -
         return [dict(r) for r in rows]
 
 
+ADMIN_DEMO_NAME = "Admin sinov"
+
+
 def get_today_duty_employees(target_date: date | None = None) -> tuple[dict | None, list[dict]]:
-    """Bugungi navbatchi guruh va xodimlarini qaytarish."""
+    """Bugungi navbatchi guruh va xodimlarini qaytarish (Admin sinov kirmaydi)."""
     if target_date is None:
         target_date = date.today()
     weekday = target_date.weekday()
@@ -186,10 +189,8 @@ def get_today_duty_employees(target_date: date | None = None) -> tuple[dict | No
     if not group:
         return None, []
     employees = get_employees_by_group(group["id"], exclude_rest_day=weekday)
+    employees = [e for e in employees if e.get("full_name") != ADMIN_DEMO_NAME]
     return group, employees
-
-
-ADMIN_DEMO_NAME = "Admin sinov"
 
 
 def get_group_by_id(group_id: int) -> dict | None:
