@@ -28,7 +28,7 @@ def _env_str(name: str, default: str = "") -> str:
     return raw.strip() if raw and raw.strip() else default
 
 
-BOT_VERSION = "2.5.3"
+BOT_VERSION = "2.5.4"
 
 # Telegram
 BOT_TOKEN: str = _env_str("BOT_TOKEN")
@@ -59,7 +59,7 @@ EVENING_MINUTE = _env_int("EVENING_MINUTE", 0) or 0
 # Ball tizimi
 SCORE_ON_TIME = 10
 SCORE_BEFORE_PHOTO = 10
-SCORE_AFTER_PHOTO = 10
+SCORE_AFTER_PHOTO = 25  # har bir KEYIN (tozalangan) rasm uchun
 SCORE_ACCEPTED = 20
 SCORE_REDO = -15
 SCORE_NO_REPORT = -30

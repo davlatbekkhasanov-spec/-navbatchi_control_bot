@@ -155,7 +155,7 @@ def calculate_submit_score(before_count: int, after_count: int) -> int:
     if before_count > 0:
         score += config.SCORE_BEFORE_PHOTO
     if after_count > 0:
-        score += config.SCORE_AFTER_PHOTO
+        score += after_count * config.SCORE_AFTER_PHOTO
     # Vaqtida yuborilgan (kechki hisobotdan oldin)
     score += config.SCORE_ON_TIME
     return score
@@ -793,7 +793,7 @@ def _help_text(is_admin_user: bool) -> str:
         "<b>ixtiyoriy</b> tozalash qilishi mumkin.\n\n"
         "<b>Ball tizimi:</b>\n"
         f"• Vaqtida: +{config.SCORE_ON_TIME} | OLDIN: +{config.SCORE_BEFORE_PHOTO}\n"
-        f"• KEYIN: +{config.SCORE_AFTER_PHOTO} | Avto qabul: +{config.SCORE_ACCEPTED}\n"
+        f"• KEYIN: har bir rasm +{config.SCORE_AFTER_PHOTO} | Avto qabul: +{config.SCORE_ACCEPTED}\n"
         f"• Yo'q hisobot: {config.SCORE_NO_REPORT}"
     )
     if is_admin_user:
